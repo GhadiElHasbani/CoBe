@@ -107,10 +107,10 @@ def get_bounds(arr: NDArray[bool], margin: int = 0) -> Tuple[List[Tuple[int, int
             if i == 0:
                 current_start = update_current_start(i, margin)
             elif i == len(arr) - 1 and arr[i-1]:
-                current_end = update_current_end(i, margin, bounds, durations)
+                update_current_end(i, margin, bounds, durations)
             elif 0 < i < len(arr) - 1:
                 if arr[i-1] and not arr[i+1]:
-                    current_end = update_current_end(i, margin, bounds, durations)
+                    update_current_end(i, margin, bounds, durations)
                     current_start = None
                 elif arr[i+1] and not arr[i-1]:
                     current_start = update_current_start(i, margin)
