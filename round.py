@@ -4,13 +4,15 @@ from helpers import *
 from round_plotter import RoundPlotter
 from typing import Dict
 import os
+import file_last_modification_time_finder
+
 
 class Round:
 
     def __init__(self,
                  file_path: str,
-                 T_start: int = 2000,
-                 T: int = 4000,
+                 T_start: int = 0,
+                 T: int = None,
                  n_agents: int = 50,
                  n_preds: int = 1,
                  center: Tuple[float, float] = (0, 0),
@@ -46,22 +48,30 @@ class Round:
         # normalizing timestep to start with 0
         timesteps = [t - min(timesteps) for t in timesteps]
 
+        if T is None:
+            T = len(timesteps)
+
         # retrieving timestamp data to determine time of each observation
+        self.avg_fs = self.infer_fs()
         if infer_timestamps:
-            self.timestamps = infer_timestamps_from_json_files(file_path=self.file_path)
+            self.timestamps = np.array(timesteps) / self.avg_fs
         else:
-            self.timestamps = self.db_get_field_values("t")
+            self.timestamps = self.db.get_field_values("t")
 
         if write_timestamps_to_csv:
             write_column_to_csv(file_path=self.file_path, column=self.timestamps, column_name='f_t')
 
         self.timestamps = [t - min(self.timestamps) for t in self.timestamps]
-        print(max(self.timestamps) - min(self.timestamps))
+
+        #check ctime ordering is the same as timesteps (but json files are more than rows of csv)
+        #ctimes = infer_timestamps_from_json_files(self.file_path)
+        #print(np.sum(np.array([ctimes[i] for i in sorted(range(len(timesteps)), key=lambda x: timesteps[x])]) != np.array([ctimes[i] for i in sorted(range(len(ctimes)), key=lambda x: ctimes[x])])))
+        #assert [ctimes[i] for i in sorted(range(len(timesteps)), key=lambda x: timesteps[x])] == [ctimes[i] for i in sorted(range(len(ctimes)), key=lambda x: ctimes[x])]
+
         # retrieving data for a single agent
         self.agent_datas = []
         self.agent_datas_arr = []
 
-        n_missing = 0
         for agent_id in range(self.n_agents):
             agent_x = self.db.get_field_values("x" + str(agent_id))
             agent_y = self.db.get_field_values("y" + str(agent_id))
@@ -71,16 +81,13 @@ class Round:
             # slicing to length
             agent_data = agent_data[self.T_start:self.T]
             agent_data_arr = convert_list_of_tuples_to_array(agent_data)
-            n_missing += np.sum(np.isnan(agent_data_arr).astype('int') + np.isinf(agent_data_arr).astype('int') > 0)
             self.agent_datas.append(agent_data)
             self.agent_datas_arr.append(agent_data_arr)
-        print(f"---> {n_missing} missing values for agents")
 
         # retrieving data for predator agent(s)
         self.pred_datas = []
         self.pred_datas_arr = []
 
-        n_missing = 0
         for pred_id in range(self.n_preds):
 
             pred_x = self.db.get_field_values("prx" + str(pred_id))
@@ -91,15 +98,12 @@ class Round:
             # slicing to length
             pred_data = pred_data[self.T_start:self.T]
             pred_data_arr = convert_list_of_tuples_to_array(pred_data)
-            n_missing += np.sum(np.isnan(pred_data_arr).astype('int') + np.isinf(pred_data_arr).astype('int') > 0)
             self.pred_datas.append(pred_data)
             self.pred_datas_arr.append(pred_data_arr)
-        print(f"---> {n_missing} missing values for predator(s)")
 
         # sorting and slicing timesteps and timestamps
         self.timesteps = np.array(sorted(timesteps)[T_start:T])
         self.timestamps = np.array(sorted(self.timestamps)[T_start:T])
-        print(max(self.timestamps) - min(self.timestamps))
         plt.hist(np.diff(self.timestamps))
         plt.show()
         print(f"{np.sum(self.timestamps[1:] == self.timestamps[:-1])} duplicates in time detected")
@@ -127,6 +131,44 @@ class Round:
         self.agent_com_bouts = None
         self.segment_into_bouts(tolerance=tolerance, margin=margin)
 
+        print("Round Summary:")
+        print(f"-> fs: {self.avg_fs}, dt = {1/self.avg_fs}")
+        print(f"-> Start time: {self.timestamps[0]} s, End time: {self.timestamps[-1]} s")
+        print(f"-> Total round duration: {self.timestamps[-1] - self.timestamps[0]} s")
+
+    def infer_fs(self) -> float:
+
+        round_identifier = self.file_path.split('/')[-2]
+        json_file_folder = "/".join(self.file_path.split('/')[:-1] + [f'database_input{round_identifier}/'])
+        if not os.path.exists(json_file_folder):
+            json_file_folder = "/".join(self.file_path.split('/')[:-1] + [f'database_input{round_identifier.lower()}/'])
+            if not os.path.exists(json_file_folder):
+                round_identifier = self.file_path.split('/')[-1].split('.')[0].split('_')[-1]
+                json_file_folder = "/".join(self.file_path.split('/')[:-1] + [f'database_input{round_identifier}/'])
+        if not os.path.exists(json_file_folder):
+            json_file_folder = "/".join(self.file_path.split('/')[:-1] + [f'database_input{self.file_path.split('/')[-2]}/'])
+        json_files = file_last_modification_time_finder.get_json_files(json_file_folder)
+        print(f"Found {len(json_files)} json files in the folder.")
+
+        # ordering files by filename
+        json_files = file_last_modification_time_finder.sort_files_by_filename(json_files)
+
+        json_files = [os.path.join(json_file_folder, file) for file in json_files]
+        print(
+            f"Files last modified between {file_last_modification_time_finder.file_last_modification_time_minutes_seconds(json_files[0])} and {file_last_modification_time_finder.file_last_modification_time_minutes_seconds(json_files[-1])}.")
+
+        # getting the number of files that were in a given second
+        _, num_files_between = file_last_modification_time_finder.find_consecutive_files_with_increasing_seconds(json_files)
+
+        # calculated framerate in each minute
+        framerates_per_min = [rate for rate in num_files_between]
+
+        # removing first and last elements as these can be not full minutes
+        framerates_per_min = framerates_per_min[1:-1]
+
+        avg_fs = sum(framerates_per_min) / len(framerates_per_min)
+        return avg_fs
+
     def compute_speed(self, datas_arr: List[NDArray]) -> List[NDArray[float]]:
         return [
             np.insert(np.sqrt(np.sum(np.diff(data_arr, axis=0) ** 2, axis=1)) / (np.diff(self.timestamps)), 0, [0.,]) for
@@ -134,18 +176,10 @@ class Round:
 
     def compute_agent_speed(self) -> List[NDArray[float]]:
         agent_datas_vel = self.compute_speed(self.agent_datas_arr)
-        n_missing = np.sum(
-            [np.sum(np.isnan(agent_data_vel).astype('int') + np.isinf(agent_data_vel).astype('int') > 0) for agent_data_vel
-             in agent_datas_vel])
-        print(f"---> {n_missing} missing values for predator speed")
         return agent_datas_vel
 
     def compute_predator_speed(self) -> List[NDArray[float]]:
         pred_datas_vel = self.compute_speed(self.pred_datas_arr)
-        n_missing = np.sum(
-            [np.sum(np.isnan(pred_data_vel).astype('int') + np.isinf(pred_data_vel).astype('int') > 0) for pred_data_vel
-             in pred_datas_vel])
-        print(f"---> {n_missing} missing values for predator speed")
         return pred_datas_vel
 
     def compute_acceleration(self, datas_vel: List[NDArray[float]],
@@ -170,8 +204,6 @@ class Round:
     def compute_predator_acceleration(self, smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
         pred_datas_vel = self.compute_predator_speed()
         pred_datas_acc = self.compute_acceleration(pred_datas_vel, smooth, smoothing_args)
-        n_missing = np.sum([np.sum(np.isnan(pred_data_acc).astype('int') + np.isinf(pred_data_acc).astype('int') > 0) for pred_data_acc in pred_datas_acc])
-        print(f"---> {n_missing} missing values for predator acceleration")
         return pred_datas_acc
 
     def compute_predator_distance_to_agent_com(self) -> List[NDArray[float]]:
@@ -227,7 +259,7 @@ if __name__ == "__main__":
     round_types = ["P1", "P2", "Shared", "P1R1", "P1R2", "P1R3"]
     round_type_id = 3
     file_path = f"./CoBeHumanExperimentsData/{round_id}/{round_types[round_type_id-1] if round_type_id < 4 else round_types[round_type_id-1][:2].upper()}/{round_id}_{round_types[round_type_id-1][:2].upper() if round_type_id < 4 else round_types[round_type_id-1]}.csv"
-    print(file_path)
+
     if not os.path.exists(file_path):
         file_path = f"./CoBeHumanExperimentsData/{round_id}/{round_types[round_type_id-1][:2].upper()}/{round_id}_{round_types[round_type_id-1][:2].upper()}.csv"
         round_types[round_type_id - 1] = round_types[round_type_id -1][:2].upper()
@@ -238,13 +270,11 @@ if __name__ == "__main__":
     #plt.show()
     #plt.hist(np.diff(exp.timestamps), bins=50)
     #plt.show()
-    print(np.mean(np.diff(exp.timestamps)))
     exp_plotter = RoundPlotter(exp, mac=True)
-    exp_plotter.plot_metrics(time_window_dur=0.07, smoothing_args={'kernel': gaussian, 'window_size': 50},
+    exp_plotter.plot_metrics(time_window_dur=2, smoothing_args={'kernel': gaussian, 'window_size': 100},
                              #save=True, # saving does not seem to work yet
                              out_file_path=f"./CoBeHumanExperimentsDataAnonymized/{round_id}/{round_types[round_type_id-1]}/{round_id}_{round_types[round_type_id-1][:2].upper()}.mp4",
-                             com_only=True,
-                             max_abs_speed=0.01)
-    exp_plotter.plot_predator_acc_smoothings(time_window_dur=0.07, window_size=40, com_only=True)
+                             com_only=True)
+    exp_plotter.plot_predator_acc_smoothings(time_window_dur=2, window_size=40, com_only=True)
     exp_plotter.plot_bout_trajectories()
     exp_plotter.plot_bout_division(com_only=True)

@@ -8,6 +8,7 @@ import mpl_toolkits.mplot3d.art3d as art3d
 
 from helpers import *
 
+
 class RoundPlotter:
 
     def __init__(self, round, mac: bool = False):
@@ -20,7 +21,7 @@ class RoundPlotter:
     def update_trajectories_ax_specs(self, ax: plt.Axes, t: int) -> None:
         ax.set_xlabel("x")
         ax.set_ylabel("y")
-        ax.set_zlabel("Time [ms]")
+        ax.set_zlabel("Time [s]")
         ax.set_title(f"Trajectory of {self.round.n_agents} P-Points and {self.round.n_preds} Predator(s)")
         ax.set_xlim(-20, 20)
         ax.set_ylim(-20, 20)
@@ -103,7 +104,7 @@ class RoundPlotter:
                     min([max([max(data[t_start:t + 1]) for data in data_list]), max_abs_val]))
         ax.set_xlim(self.round.timestamps[t] - 2 * time_window_dur / 3,
                     self.round.timestamps[t] + time_window_dur / 3)
-        ax.set_xlabel("Time [ms]")
+        ax.set_xlabel("Time [s]")
         ax.set_ylabel(metric.split(' ')[0])
         ax.set_title(f"Predator {metric} over time")
 
@@ -119,7 +120,7 @@ class RoundPlotter:
 
 
     def plot_metrics(self, time_window_dur: float = 2000., smoothing_args: Dict = None,
-                     max_abs_speed: float = 2., max_abs_acceleration: float = 2.,
+                     max_abs_speed: float = None, max_abs_acceleration: float = None,
                      com_only: bool = False,
                      save: bool = False, out_file_path: str = "metrics.mp4") -> None:
         def update(t: int, args_dict: Dict) -> Dict:
@@ -137,31 +138,31 @@ class RoundPlotter:
 
             # Speed axes
             self.update_predator_lines(pred_datas_vel, ax=args_dict['ax_vel'], lines=[args_dict[f'vel_{pid}'] for pid in range(self.round.n_preds)],
-                                       t=t, t_start=t_start, time_window_dur=time_window_dur)
+                                       t=t, t_start=t_start)
             self.update_metric_ax_specs(pred_datas_vel, ax=args_dict['ax_vel'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
                                         metric="speed", max_abs_val=max_abs_speed)
             # Acceleration axes
             self.update_predator_lines(pred_datas_acc_smoothed, ax=args_dict['ax_acc'],
                                        lines=[args_dict[f'acc_smoothed_{pid}'] for pid in range(self.round.n_preds)],
-                                       t=t, t_start=t_start, time_window_dur=time_window_dur)
+                                       t=t, t_start=t_start)
             self.update_predator_lines(pred_datas_acc, ax=args_dict['ax_acc'],
                                        lines=[args_dict[f'acc_{pid}'] for pid in range(self.round.n_preds)],
-                                       t=t, t_start=t_start, time_window_dur=time_window_dur, linestyle='--', alpha=0.6)
+                                       t=t, t_start=t_start, linestyle='--', alpha=0.6)
             self.update_metric_ax_specs(vcombine_lists_of_arrays([pred_datas_acc, pred_datas_acc_smoothed]), ax=args_dict['ax_acc'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
                                         metric="acceleration", max_abs_val=max_abs_acceleration)
             # Predator distance to agents center of mass axes
             self.update_predator_lines(pred_datas_com, ax=args_dict['ax_com'],
                                        lines=[args_dict[f'com_{pid}'] for pid in range(self.round.n_preds)],
-                                       t=t, t_start=t_start, time_window_dur=time_window_dur)
+                                       t=t, t_start=t_start)
             self.update_metric_ax_specs(pred_datas_com, ax=args_dict['ax_com'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
                                         metric="distance from agents center of mass")
             # Predator distance to border axes
             self.update_predator_lines(pred_datas_bor, ax=args_dict['ax_bor'],
                                        lines=[args_dict[f'bor_{pid}'] for pid in range(self.round.n_preds)],
-                                       t=t, t_start=t_start, time_window_dur=time_window_dur)
+                                       t=t, t_start=t_start)
             self.update_metric_ax_specs(pred_datas_bor, ax=args_dict['ax_bor'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
                                         metric="distance from closest border")
@@ -278,7 +279,7 @@ class RoundPlotter:
                                        t=t, t_start=t_start, colors=['Blacks'])
             self.update_metric_ax_specs([np.concatenate([np.array([0]), dts])], ax=args_dict['ax_dts'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
-                                        metric="dt [ms]")
+                                        metric="dt [s]")
 
             return args_dict
 
@@ -286,10 +287,6 @@ class RoundPlotter:
         gs = GridSpec.GridSpec(5, 2)
 
         dts = np.diff(self.round.timestamps)
-        #fs = 1e03*self.round.timesteps[-1]/self.round.timestamps[-1]
-        fs = 30
-        print(f"dts: {dts},fs: {1e03/np.mean(dts)}")
-        print(f"fs: {1e03*self.round.timesteps[-1]/self.round.timestamps[-1]}")
 
         ## Trajectory figure
         ax = fig.add_subplot(gs[:, 0], projection='3d')
@@ -305,7 +302,7 @@ class RoundPlotter:
                 'smoothing_method': 'window',
                 'kernel': gaussian, 'window_size': window_size})
         pred_datas_acc_bw = self.round.compute_predator_acceleration(smooth=True, smoothing_args={
-                'smoothing_method': 'butterworth', 'fs': fs, 'bw_fstart': 10, 'bw_fstop': 14, 'bw_order': 3})
+                'smoothing_method': 'butterworth', 'fs': self.round.avg_fs/2, 'bw_fstart': 5, 'bw_fstop': 10, 'bw_order': 3})
 
         # speed
         ax_acc = fig.add_subplot(gs[0, 1])
@@ -387,7 +384,7 @@ class RoundPlotter:
                 left = self.round.timestamps[bout_end]
             ax.barh(y_pos[pid], width=self.round.timestamps[-1] - left, left=left, color='grey')
 
-        ax.set_xlabel("Time [ms]")
+        ax.set_xlabel("Time [s]")
         ax.set_yticks(y_pos[:self.round.n_preds] if set_y_labels else [])
         ax.set_title("Predator bouts (colored) timeline")
         if ax is None:

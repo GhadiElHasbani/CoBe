@@ -5,7 +5,6 @@ from numpy.typing import NDArray
 from shapely.geometry import Polygon, Point
 from scipy.signal import butter, lfilter
 import os
-from datetime import datetime
 
 
 def convert_list_of_tuples_to_array(list_of_tuples: List[Tuple]) -> NDArray:
@@ -116,35 +115,6 @@ def get_bounds(arr: NDArray[bool], margin: int = 0) -> Tuple[List[Tuple[int, int
                     current_start = update_current_start(i, margin)
 
     return bounds, durations
-
-
-def get_file_mtime_secs(file_path: str) -> float:
-    if os.path.exists(file_path):
-        # Get the modification timestamp
-        modification_time = os.path.getctime(file_path)
-        # Convert it to a human-readable format with milliseconds
-        readable_time = datetime.fromtimestamp(os.stat(file_path).st_ctime)
-        total_seconds = readable_time.hour * 60 * 60 + readable_time.minute * 60 + readable_time.second + readable_time.microsecond * 1e-06
-        return total_seconds
-    else:
-        raise FileNotFoundError(f"File {file_path} not found.")
-
-
-def infer_timestamps_from_json_files(file_path: str) -> List[float]:
-    timestamps = []
-    round_identifier = file_path.split('/')[-2]
-    json_dir = "/".join(file_path.split('/')[:-1] + [f'database_input{round_identifier}/'])
-    if not os.path.exists(json_dir):
-        json_dir = "/".join(file_path.split('/')[:-1] + [f'database_input{round_identifier.lower()}/'])
-        if not os.path.exists(json_dir):
-            round_identifier = file_path.split('/')[-1].split('.')[0].split('_')[-1]
-            json_dir = "/".join(file_path.split('/')[:-1] + [f'database_input{round_identifier}/'])
-    json_file_paths = [json_dir + f for f in os.listdir(json_dir) if f.endswith('json')]
-    for json_file_path in json_file_paths:
-        timestamps.append(get_file_mtime_secs(json_file_path))
-
-    return timestamps
-
 
 def write_column_to_csv(file_path: str, column: Iterable, column_name: str):
     out_file = '/'.join(file_path.split('/')[:-1]) + file_path.split('/')[-1].split('.')[-2] + '_t.' + file_path.split('/')[-1].split('.')[-1]
