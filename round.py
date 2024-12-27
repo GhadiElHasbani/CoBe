@@ -120,6 +120,7 @@ class Round:
 
         # create bouts
         self.min_bout_length = min_bout_length
+        self.pred_bout_bounds = None
         self.pred_datas_arr_bouts = None
         self.agent_datas_arr_bouts = None
         self.timestamps_bouts = None
@@ -201,9 +202,12 @@ class Round:
 
         preds_points_during_bouts = [pred_dist_to_center < threshold for pred_dist_to_center in preds_dist_to_center]
         temp = [get_bounds(pred_points_during_bouts, margin=margin) for pred_points_during_bouts in preds_points_during_bouts]
-        preds_bout_bounds = list(itertools.chain.from_iterable([temp_el[0] for temp_el in temp]))
-        preds_bout_lengths = list(itertools.chain.from_iterable([temp_el[1] for temp_el in temp]))
-        preds_bout_bounds_filtered = np.array(preds_bout_bounds)[np.array(preds_bout_lengths) >= self.min_bout_length].tolist()
+        preds_bout_bounds = [temp_el[0] for temp_el in temp]
+        preds_bout_lengths = [temp_el[1] for temp_el in temp]
+        preds_bout_bounds_filtered = [np.array(preds_bout_bounds[pid])[np.array(preds_bout_lengths[pid]) >= self.min_bout_length].tolist() for pid in range(self.n_preds)]
+        self.pred_bout_bounds = preds_bout_bounds_filtered
+
+        preds_bout_bounds_filtered = list(itertools.chain.from_iterable(preds_bout_bounds_filtered))
         self.pred_datas_arr_bouts = [np.vstack([pred_data_arr[preds_bout_bound_filtered[0]:preds_bout_bound_filtered[1]] for preds_bout_bound_filtered in preds_bout_bounds_filtered]) for pred_data_arr in self.pred_datas_arr]
         self.agent_datas_arr_bouts = [np.vstack(
             [agent_data_arr[preds_bout_bound_filtered[0]:preds_bout_bound_filtered[1]] for preds_bout_bound_filtered in
@@ -242,4 +246,5 @@ if __name__ == "__main__":
                              com_only=True,
                              max_abs_speed=0.01)
     exp_plotter.plot_predator_acc_smoothings(time_window_dur=0.07, window_size=40, com_only=True)
-    exp_plotter.plot_bouts()
+    exp_plotter.plot_bout_trajectories()
+    exp_plotter.plot_bout_division(com_only=True)
