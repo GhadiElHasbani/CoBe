@@ -102,9 +102,9 @@ class RoundPlotter:
                                t: int, t_start: int, time_window_dur: float,
                                metric: str, max_abs_val: float = None):
         if max_abs_val is None:
-            max_abs_val = max([max(abs(data)) for data in data_list])
-        ax.set_ylim(max([min([min(data[t_start:t + 1]) for data in data_list]), -max_abs_val]),
-                    min([max([max(data[t_start:t + 1]) for data in data_list]), max_abs_val]))
+            max_abs_val = np.nanmax([np.nanmax(abs(data)) for data in data_list])
+        ax.set_ylim(np.nanmax([np.nanmin([np.nanmin(data[t_start:t + 1]) for data in data_list]), -max_abs_val]),
+                    np.nanmin([np.nanmax([np.nanmax(data[t_start:t + 1]) for data in data_list]), max_abs_val]))
         ax.set_xlim(self.round.timestamps[t] - 2 * time_window_dur / 3,
                     self.round.timestamps[t] + time_window_dur / 3)
         ax.set_xlabel("Time [s]")
@@ -135,6 +135,7 @@ class RoundPlotter:
             args_dict['ax_acc'].cla()
             args_dict['ax_com'].cla()
             args_dict['ax_bor'].cla()
+            args_dict['ax_att'].cla()
 
             self.update_trajectories(agent_datas=self.round.agent_datas, pred_datas=self.round.pred_datas,
                                      ax=args_dict['ax'], t=t, z=z, com_only=com_only, agent_com=self.round.agent_com)
@@ -169,11 +170,18 @@ class RoundPlotter:
             self.update_metric_ax_specs(pred_datas_bor, ax=args_dict['ax_bor'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
                                         metric="distance from closest border")
+            # Predator distance to border axes
+            self.update_predator_lines(pred_datas_att, ax=args_dict['ax_att'],
+                                       lines=[args_dict[f'att_{pid}'] for pid in range(self.round.n_preds)],
+                                       t=t, t_start=t_start)
+            self.update_metric_ax_specs(pred_datas_att, ax=args_dict['ax_att'],
+                                        t=t, t_start=t_start, time_window_dur=time_window_dur,
+                                        metric="attack angle")
 
             return args_dict
 
         fig = plt.figure(dpi=100)
-        gs = GridSpec.GridSpec(4, 2)
+        gs = GridSpec.GridSpec(5, 2)
 
         ## Trajectory figure
         ax = fig.add_subplot(gs[:, 0], projection='3d')
@@ -189,6 +197,7 @@ class RoundPlotter:
         pred_datas_acc = self.round.compute_predator_acceleration(smooth=False)
         pred_datas_com = self.round.compute_predator_distance_to_agent_com()
         pred_datas_bor = self.round.compute_predator_distance_to_border()
+        pred_datas_att = self.round.compute_predator_attack_angle()
 
         # speed
         ax_vel = fig.add_subplot(gs[0, 1])
@@ -198,12 +207,15 @@ class RoundPlotter:
         ax_com = fig.add_subplot(gs[2, 1])
         # predator distance from closest border
         ax_bor = fig.add_subplot(gs[3, 1])
+        # predator distance from closest border
+        ax_att = fig.add_subplot(gs[4, 1])
 
         args_dict = {'ax': ax,
                      'ax_vel': ax_vel,
                      'ax_acc': ax_acc,
                      'ax_com': ax_com,
-                     'ax_bor': ax_bor}
+                     'ax_bor': ax_bor,
+                     'ax_att': ax_att}
 
         for pid in range(self.round.n_preds):
             args_dict[f'vel_{pid}'], = ax_vel.plot([], [], color=self.colors[pid][:-1])
@@ -211,6 +223,7 @@ class RoundPlotter:
             args_dict[f'acc_smoothed_{pid}'], = ax_acc.plot([], [], color=self.colors[pid][:-1])
             args_dict[f'com_{pid}'], = ax_com.plot([], [], color=self.colors[pid][:-1])
             args_dict[f'bor_{pid}'], = ax_bor.plot([], [], color=self.colors[pid][:-1])
+            args_dict[f'att_{pid}'], = ax_att.plot([], [], color=self.colors[pid][:-1])
 
         ani = animation.FuncAnimation(fig=fig, func=update, frames=len(self.round.timestamps), interval=1, fargs=(args_dict,))
 
@@ -432,7 +445,7 @@ class RoundPlotter:
                     pred_labels.append("in bout")
                 else:
                     pred_labels.append("")
-                args_dict['bout_indicator'][pid] = mpl.patches.Ellipse((50 + pid*50, self.round.n_preds -0.25*(not separate_predators) + 0.75),
+                args_dict['bout_indicator'][pid] = mpl.patches.Ellipse((50 + pid*50, self.round.n_preds + 0.75 if separate_predators else 1.5),
                                                                         30, height=0.05, color=self.colors[pid][:-1],
                                                                        clip_on=False, alpha=1. if args_dict['in_bout'][pid] else 0.4)
                 args_dict['ax_bout_div'].add_patch(args_dict['bout_indicator'][pid])
@@ -443,7 +456,7 @@ class RoundPlotter:
             # Bout divison axes
             self.plot_bout_division_hbars(ax=args_dict['ax_bout_div'], set_y_labels=False, separate_predators=separate_predators)
             # add time bar
-            args_dict['ax_bout_div'].axvline(x=self.round.timestamps[t], ymin=-0.1, ymax=(self.round.n_preds)*0.88*0.5 + (self.round.n_preds*0.88*0.5)*(not separate_predators))
+            args_dict['ax_bout_div'].axvline(x=self.round.timestamps[t], ymin=-0.1, ymax=(self.round.n_preds if separate_predators else 1)*0.88)
             args_dict['ax_bout_div'].set_xlim([0, self.round.timestamps[-1]])
 
             return args_dict

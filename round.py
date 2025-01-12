@@ -229,9 +229,14 @@ class Round:
         return agent_com_dist_to_border
 
     def compute_predator_distance_to_center(self) -> List[NDArray[float]]:
-        preds_dist_to_center = [euclidean_distance(np.array(self.center).reshape((-1,1)), pred_data_arr.T) for pred_data_arr in self.pred_datas_arr]
+        pred_dist_to_center = [euclidean_distance(np.array(self.center).reshape((-1,1)), pred_data_arr.T) for pred_data_arr in self.pred_datas_arr]
 
-        return preds_dist_to_center
+        return pred_dist_to_center
+
+    def compute_predator_attack_angle(self) -> List[NDArray[float]]:
+        pred_attack_angles = [180 - compute_angle(self.agent_com[:-1], pred_data_arr[:-1], pred_data_arr[1]) for pred_data_arr in self.pred_datas_arr]
+
+        return pred_attack_angles
 
     def segment_into_bouts(self,
                            dist_tolerance: float = 0.9,
@@ -280,26 +285,25 @@ class Round:
 
 
         self.pred_bout_bounds_discarded = [discarded_bouts_length, discarded_bouts_speed]
-        pred_bout_bounds_discarded = [list(itertools.chain.from_iterable(self.pred_bout_bounds_discarded[i])) for i in range(len(self.pred_bout_bounds_discarded))]
+        pred_bout_bounds_discarded = [list(itertools.chain.from_iterable(pred_bout_bounds_discarded[i])) for i in range(len(pred_bout_bounds_discarded))]
 
         self.pred_datas_arr_bouts_discarded = [[np.vstack(
             [pred_data_arr[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
-             pred_bout_bounds_discarded[i]]) for pred_data_arr in self.pred_datas_arr] for i in range(len(self.pred_bout_bounds_discarded))]
+             pred_bout_bounds_discarded[i]]) for pred_data_arr in self.pred_datas_arr] if len(pred_bout_bounds_discarded[i]) > 0 else [] for i in range(len(pred_bout_bounds_discarded))]
         self.agent_datas_arr_bouts_discarded = [[np.vstack(
             [agent_data_arr[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
-             pred_bout_bounds_discarded[i]]) for agent_data_arr in self.agent_datas_arr] for i in range(len(self.pred_bout_bounds_discarded))]
+             pred_bout_bounds_discarded[i]]) for agent_data_arr in self.agent_datas_arr] if len(pred_bout_bounds_discarded[i]) > 0 else [] for i in range(len(pred_bout_bounds_discarded))]
         self.timestamps_bouts_discarded = [np.concatenate(
             [self.timestamps[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
-             pred_bout_bounds_discarded[i]]) for i in range(len(self.pred_bout_bounds_discarded))]
+             pred_bout_bounds_discarded[i]]) if len(pred_bout_bounds_discarded[i]) > 0 else [] for i in range(len(pred_bout_bounds_discarded))]
         self.agent_com_bouts_discarded = [np.concatenate(
             [self.agent_com[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
-             pred_bout_bounds_discarded[i]]) for i in range(len(self.pred_bout_bounds_discarded))]
+             pred_bout_bounds_discarded[i]]) if len(pred_bout_bounds_discarded[i]) > 0 else [] for i in range(len(pred_bout_bounds_discarded))]
 
 
 if __name__ == "__main__":
     #find CoBeHumanExperimentsData/ -name '*.zip' -exec sh -c 'unzip -d "${1%.*}" "$1"' _ {} \;
 
-    import matplotlib.pyplot as plt
     round_id = "2837465091"
     round_types = ["P1", "P2", "Shared", "P1R1", "P1R2", "P1R3"]
     round_type_id = 3
@@ -314,12 +318,13 @@ if __name__ == "__main__":
                 speed_tolerance=0.15, speed_threshold=5.)
 
     exp_plotter = RoundPlotter(exp, mac=True)
-    #exp_plotter.plot_metrics(time_window_dur=2, smoothing_args={'kernel': gaussian, 'window_size': 100},
-    #                         #save=True, # saving does not seem to work yet
-    #                         out_file_path=f"./CoBeHumanExperimentsDataAnonymized/{round_id}/{round_types[round_type_id-1]}/{round_id}_{round_types[round_type_id-1][:2].upper()}.mp4",
-    #                         com_only=True)
-    #exp_plotter.plot_predator_acc_smoothings(time_window_dur=2, window_size=40, com_only=True)
-    #exp_plotter.plot_bout_trajectories(discarded=False)
-    #exp_plotter.plot_bout_trajectories(discarded=True, filter_number=0)  # minimum bout length filter
-    #exp_plotter.plot_bout_trajectories(discarded=True, filter_number=1)  # speed filter
-    exp_plotter.plot_bout_division(com_only=True, separate_predators=True)
+    exp_plotter.plot_metrics(time_window_dur=2, smoothing_args={'kernel': gaussian, 'window_size': 100},
+                             #save=True, # saving does not seem to work yet
+                             out_file_path=f"./CoBeHumanExperimentsDataAnonymized/{round_id}/{round_types[round_type_id-1]}/{round_id}_{round_types[round_type_id-1][:2].upper()}.mp4",
+                             com_only=True)
+    exp_plotter.plot_predator_acc_smoothings(time_window_dur=2, window_size=40, com_only=True)
+    exp_plotter.plot_bout_trajectories()
+    exp_plotter.plot_bout_trajectories(discarded=True, filter_number=0)  # minimum bout length filter
+    exp_plotter.plot_bout_trajectories(discarded=True, filter_number=1)  # speed filter
+    exp_plotter.plot_bout_trajectories(discarded=True, filter_number=2)  # absolute speed filter
+    exp_plotter.plot_bout_division(com_only=True)

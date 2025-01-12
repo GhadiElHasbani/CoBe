@@ -136,3 +136,15 @@ def vcombine_lists_of_arrays(lists_of_arrays: Iterable[List[NDArray]]) -> List[N
         list_of_arrays = [np.concatenate([list_of_arrays[j], arr]) for j, arr in enumerate(lists_of_arrays[i])]
 
     return list_of_arrays
+
+
+def compute_angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> NDArray[float]:
+    ba = a - b
+    bc = c - b
+
+    cosine_angles = np.sum(ba * bc, axis=-1) / (np.linalg.norm(ba, axis=-1) * np.linalg.norm(bc, axis=-1))
+    angles = np.arccos(cosine_angles)
+
+    return np.concatenate([np.degrees(angles), [np.degrees(angles)[-1]]])
+
+
