@@ -64,7 +64,7 @@ class RoundPlotter:
             if not com_only:
                 self.plot_agent_trajectories(agent_data, ax=ax, t=t)
 
-    def update_predator_trajectories(self, pred_datas: List[List[Tuple[float, float]]], ax: plt.Axes, t: int, z: float) -> None:
+    def update_predator_trajectories(self, pred_datas: List[List[Tuple[float, float]]], ax: plt.Axes, t: int, z: float, labels: List[str] = None) -> None:
         for pid in range(self.round.n_preds):
             pred_data = pred_datas[pid]
 
@@ -77,10 +77,13 @@ class RoundPlotter:
             x = pred_data[t][0]
             y = pred_data[t][1]
 
-            ax.scatter(x, y, z, s=100, marker='x', color=self.colors[pid][:-1])
+            ax.scatter(x, y, z, s=100, marker='x', color=self.colors[pid][:-1], label=labels[pid] if labels is not None else None)
+
+        if labels is not None:
+            ax.legend()
 
     def update_trajectories(self, agent_datas: List[List[Tuple[float, float]]], pred_datas: List[List[Tuple[float, float]]],
-                            ax: plt.Axes, t: int, z: float,
+                            ax: plt.Axes, t: int, z: float, pred_labels: List[str] = None,
                             show_arena_borders: bool = True, com_only: bool = False,
                             agent_com=NDArray[float]) -> None:
         self.update_trajectories_ax_specs(ax, t=t)
@@ -93,7 +96,7 @@ class RoundPlotter:
         self.update_agent_trajectories(agent_datas=agent_datas, ax=ax, t=t, z=z, com_only=com_only, agent_com=agent_com)
 
         # predator data
-        self.update_predator_trajectories(pred_datas=pred_datas, ax=ax, t=t, z=z)
+        self.update_predator_trajectories(pred_datas=pred_datas, ax=ax, t=t, z=z, labels=pred_labels)
 
     def update_metric_ax_specs(self, data_list: List[NDArray[float]], ax: plt.Axes,
                                t: int, t_start: int, time_window_dur: float,
@@ -344,15 +347,16 @@ class RoundPlotter:
             ani.save(out_file_path, writer='ffmpeg')
             plt.close()
 
-    def plot_bout_trajectories(self, time_window_dur: float = 2000., com_only: bool = True):
+    def plot_bout_trajectories(self, com_only: bool = True, discarded: bool = False, filter_number: int = 0):
         def update(t: int, args_dict: Dict) -> Dict:
-            t_start = max([0, find_nearest(self.round.timestamps, self.round.timestamps[t] - 2 * time_window_dur / 3)])
             z = self.round.timestamps[t]
 
             args_dict['ax'].cla()
 
-            self.update_trajectories(agent_datas=self.round.agent_datas_arr_bouts, pred_datas=self.round.pred_datas_arr_bouts,
-                                     ax=args_dict['ax'], t=t, z=z, com_only=com_only, agent_com=self.round.agent_com_bouts)
+            self.update_trajectories(agent_datas=agent_datas,
+                                     pred_datas=pred_datas,
+                                     ax=args_dict['ax'], t=t, z=z,
+                                     com_only=com_only, agent_com=agent_com)
 
             return args_dict
 
@@ -363,48 +367,84 @@ class RoundPlotter:
         ax = fig.add_subplot(gs[0, 0], projection='3d')
 
         args_dict = {'ax': ax}
+        agent_datas = self.round.agent_datas_arr_bouts_discarded[filter_number] if discarded else self.round.agent_datas_arr_bouts
+        agent_com = self.round.agent_com_bouts_discarded[filter_number] if discarded else self.round.agent_com_bouts
+        pred_datas = self.round.pred_datas_arr_bouts_discarded[filter_number] if discarded else self.round.pred_datas_arr_bouts
+        timestamps = self.round.timestamps_bouts_discarded[filter_number] if discarded else self.round.timestamps_bouts
 
-        ani = animation.FuncAnimation(fig=fig, func=update, frames=len(self.round.timestamps_bouts), interval=1, fargs=(args_dict,))
+        ani = animation.FuncAnimation(fig=fig, func=update, frames=len(timestamps), interval=1, fargs=(args_dict,))
 
         plt.tight_layout()
         plt.show()
 
-    def plot_bout_division_hbars(self, ax: plt.Axes = None, set_y_labels: bool = True):
-        y_pos = ['Predator 1', 'Predator 2', 'Predator 3'] if set_y_labels else np.arange(3)
+    def plot_bout_division_hbars(self, ax: plt.Axes = None, set_y_labels: bool = True, separate_predators: bool = True):
+        y_pos = ['Predator 1', 'Predator 2', 'Predator 3'] if set_y_labels else np.arange(3) + 1 if separate_predators else np.full(3, 1)
 
         if ax is None:
             fig = plt.figure()
             ax = fig.add_subplot(111)
 
+        min_bout_start = self.round.timestamps[-1]
+        max_bout_end = self.round.timestamps[0]
         for pid in range(self.round.n_preds):
             left = self.round.timestamps[0]
-            for bout_start, bout_end in self.round.pred_bout_bounds[pid]:
-                ax.barh(y_pos[pid], width=self.round.timestamps[bout_start] - left, left=left, color='grey')
-                ax.barh(y_pos[pid], width=self.round.timestamps[bout_end] - self.round.timestamps[bout_start], left=self.round.timestamps[bout_start], color=self.colors[pid][:-1])
+            for i, (bout_start, bout_end) in enumerate(self.round.pred_bout_bounds[pid]):
+                if separate_predators:
+                    ax.barh(y_pos[pid], width=self.round.timestamps[bout_start] - left, left=left, color='grey')
+                else:
+                    min_bout_start = np.min([min_bout_start, self.round.timestamps[bout_start]])
+                    max_bout_end = np.max([max_bout_end, self.round.timestamps[bout_end]])
                 left = self.round.timestamps[bout_end]
-            ax.barh(y_pos[pid], width=self.round.timestamps[-1] - left, left=left, color='grey')
-
+                ax.barh(y_pos[pid], width=self.round.timestamps[bout_end] - self.round.timestamps[bout_start], left=self.round.timestamps[bout_start], color=self.colors[pid][:-1], alpha=0.6 if not separate_predators else 1)
+            if separate_predators:
+                ax.barh(y_pos[pid], width=self.round.timestamps[-1] - left, left=left, color='grey')
+        if not separate_predators:
+            ax.barh(y_pos[0], width=self.round.timestamps[-1] - max_bout_end, left=max_bout_end, color='grey')
+            ax.barh(y_pos[0], width=min_bout_start - self.round.timestamps[0], left=self.round.timestamps[0], color='grey')
         ax.set_xlabel("Time [s]")
         ax.set_yticks(y_pos[:self.round.n_preds] if set_y_labels else [])
         ax.set_title("Predator bouts (colored) timeline")
         if ax is None:
             plt.show()
 
-    def plot_bout_division(self, time_window_dur: float = 2000., com_only: bool = False,
+    def plot_bout_division(self, com_only: bool = False, separate_predators: bool = False,
                            save: bool = False, out_file_path: str = "bout_divisions.mp4") -> None:
         def update(t: int, args_dict: Dict) -> Dict:
-            t_start = max([0, find_nearest(self.round.timestamps, self.round.timestamps[t] - 2*time_window_dur / 3)])
-            z = self.round.timestamps[t]
 
             args_dict['ax'].cla()
             args_dict['ax_bout_div'].cla()
 
-            self.update_trajectories(agent_datas=self.round.agent_datas, pred_datas=self.round.pred_datas,
-                                     ax=args_dict['ax'], t=t, z=z, com_only=com_only, agent_com=self.round.agent_com)
+            if t == 0:
+                args_dict['in_bout'] = [t in pred_bout_starts[pid] for pid in range(self.round.n_preds)]
+
+            for pid in range(self.round.n_preds):
+                if args_dict['in_bout'][pid]:
+                    args_dict['in_bout'][pid] = args_dict['in_bout'][pid] and (t not in pred_bout_ends[pid])
+                else:
+                    args_dict['in_bout'][pid] = t in pred_bout_starts[pid]
+
+            self.update_trajectories(agent_datas=self.round.agent_datas, pred_datas=self.round.pred_datas, pred_labels=[".", "."],
+                                     ax=args_dict['ax'], t=t, z=self.round.timestamps[t], com_only=com_only, agent_com=self.round.agent_com)
+
+            pred_labels = []
+            for pid in range(self.round.n_preds):
+                if args_dict['in_bout'][pid]:
+                    pred_labels.append("in bout")
+                else:
+                    pred_labels.append("")
+                args_dict['bout_indicator'][pid] = mpl.patches.Ellipse((50 + pid*50, self.round.n_preds -0.25*(not separate_predators) + 0.75),
+                                                                        30, height=0.05, color=self.colors[pid][:-1],
+                                                                       clip_on=False, alpha=1. if args_dict['in_bout'][pid] else 0.4)
+                args_dict['ax_bout_div'].add_patch(args_dict['bout_indicator'][pid])
+
+            args_dict['legend'] = args_dict['ax'].legend(loc='upper right')
+            [args_dict['legend'].get_texts()[pid].set_text(pred_labels[pid]) for pid in range(self.round.n_preds)]
+
             # Bout divison axes
-            self.plot_bout_division_hbars(ax=args_dict['ax_bout_div'], set_y_labels=False)
+            self.plot_bout_division_hbars(ax=args_dict['ax_bout_div'], set_y_labels=False, separate_predators=separate_predators)
             # add time bar
-            args_dict['ax_bout_div'].axvline(x=self.round.timestamps[t])
+            args_dict['ax_bout_div'].axvline(x=self.round.timestamps[t], ymin=-0.1, ymax=(self.round.n_preds)*0.88*0.5 + (self.round.n_preds*0.88*0.5)*(not separate_predators))
+            args_dict['ax_bout_div'].set_xlim([0, self.round.timestamps[-1]])
 
             return args_dict
 
@@ -416,10 +456,15 @@ class RoundPlotter:
 
         ax_bout_div = fig.add_subplot(gs[0, 1])
 
-        args_dict = {'ax': ax, 'ax_bout_div': ax_bout_div}
+        args_dict = {'ax': ax, 'ax_bout_div': ax_bout_div,
+                     'in_bout': [False for _ in range(self.round.n_preds)], 'bout_id': -1,
+                     'legend': ax.legend(loc='upper right'), 'bout_indicator': [mpl.patches.Ellipse((50 + pid*50, 1.5), 30, height=0.05, color=self.colors[pid][:-1],
+                                            clip_on=False, alpha=0.4) for pid in range(self.round.n_preds)]}
+
 
         args_dict['time_bar'] = args_dict['ax_bout_div'].axvline(self.round.timestamps[0])
-
+        pred_bout_starts = [[self.round.pred_bout_bounds[pid][i][0] for i in range(len(self.round.pred_bout_bounds[pid]))] for pid in range(self.round.n_preds)]
+        pred_bout_ends = [[self.round.pred_bout_bounds[pid][i][1] for i in range(len(self.round.pred_bout_bounds[pid]))] for pid in range(self.round.n_preds)]
 
         ani = animation.FuncAnimation(fig=fig, func=update, frames=len(self.round.timestamps), interval=1, fargs=(args_dict,))
 
