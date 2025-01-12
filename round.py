@@ -18,11 +18,13 @@ class Round:
                  center: Tuple[float, float] = (0, 0),
                  radius: float = 20,
                  remove_dup_timevals: bool = False,
-                 min_bout_length: int = 2,
                  infer_timestamps: bool = True,
                  write_timestamps_to_csv: bool = False,
-                 tolerance: float = 0.9,
-                 margin: int = 0):
+                 dist_tolerance: float = 0.9,
+                 margin: int = 0,
+                 min_bout_length: int = 2,
+                 speed_threshold: float = 0.,
+                 speed_tolerance: float = 1.):
         # Save experiment parameters
         self.file_path = file_path
         self.T_start = T_start
@@ -104,8 +106,7 @@ class Round:
         # sorting and slicing timesteps and timestamps
         self.timesteps = np.array(sorted(timesteps)[T_start:T])
         self.timestamps = np.array(sorted(self.timestamps)[T_start:T])
-        plt.hist(np.diff(self.timestamps))
-        plt.show()
+
         print(f"{np.sum(self.timestamps[1:] == self.timestamps[:-1])} duplicates in time detected")
         if remove_dup_timevals:
             print(f"Removing time duplicates")
@@ -123,13 +124,19 @@ class Round:
         self.agent_com = np.mean(np.array(self.agent_datas_arr), axis=0)
 
         # create bouts
-        self.min_bout_length = min_bout_length
         self.pred_bout_bounds = None
         self.pred_datas_arr_bouts = None
         self.agent_datas_arr_bouts = None
         self.timestamps_bouts = None
         self.agent_com_bouts = None
-        self.segment_into_bouts(tolerance=tolerance, margin=margin)
+
+        self.pred_bout_bounds_discarded = None
+        self.pred_datas_arr_bouts_discarded = None
+        self.agent_datas_arr_bouts_discarded = None
+        self.timestamps_bouts_discarded = None
+        self.agent_com_bouts_discarded = None
+        self.segment_into_bouts(dist_tolerance=dist_tolerance, margin=margin, min_bout_length=min_bout_length,
+                                speed_threshold=speed_threshold, speed_tolerance=speed_tolerance)
 
         print("Round Summary:")
         print(f"-> fs: {self.avg_fs}, dt = {1/self.avg_fs}")
@@ -226,29 +233,67 @@ class Round:
 
         return preds_dist_to_center
 
-    def segment_into_bouts(self, tolerance: float = 0.9, margin: int = 0):
-        threshold = tolerance*self.width/2
+    def segment_into_bouts(self,
+                           dist_tolerance: float = 0.9,
+                           margin: int = 0,
+                           min_bout_length: int = 2,
+                           speed_threshold: float = 0.,
+                           speed_tolerance: float = 1.):
+        dist_threshold = dist_tolerance*self.width/2
 
-        print(f"Segmenting bouts using threshold of {threshold} on predator distance from arena center {self.center}")
-        preds_dist_to_center = self.compute_predator_distance_to_center()
+        print(f"Segmenting bouts using threshold of {dist_threshold}, with a margin of {margin} observations, on predator distance from arena center {self.center}")
+        pred_dist_to_center = self.compute_predator_distance_to_center()
 
-        preds_points_during_bouts = [pred_dist_to_center < threshold for pred_dist_to_center in preds_dist_to_center]
-        temp = [get_bounds(pred_points_during_bouts, margin=margin) for pred_points_during_bouts in preds_points_during_bouts]
-        preds_bout_bounds = [temp_el[0] for temp_el in temp]
-        preds_bout_lengths = [temp_el[1] for temp_el in temp]
-        preds_bout_bounds_filtered = [np.array(preds_bout_bounds[pid])[np.array(preds_bout_lengths[pid]) >= self.min_bout_length].tolist() for pid in range(self.n_preds)]
-        self.pred_bout_bounds = preds_bout_bounds_filtered
+        pred_points_during_bouts = [pred_dist_to_center < dist_threshold for pred_dist_to_center in pred_dist_to_center]
+        temp = [get_bounds(pred_points_during_bouts, margin=margin) for pred_points_during_bouts in pred_points_during_bouts]
+        pred_bout_bounds = [temp_el[0] for temp_el in temp]
 
-        preds_bout_bounds_filtered = list(itertools.chain.from_iterable(preds_bout_bounds_filtered))
-        self.pred_datas_arr_bouts = [np.vstack([pred_data_arr[preds_bout_bound_filtered[0]:preds_bout_bound_filtered[1]] for preds_bout_bound_filtered in preds_bout_bounds_filtered]) for pred_data_arr in self.pred_datas_arr]
+        print(f"--> found {np.sum([len(pred_bout_bounds[pid]) for pid in range(self.n_preds)])}")
+
+        print(f"Discarding bouts with less than {min_bout_length} observations")
+        pred_bout_lengths = [temp_el[1] for temp_el in temp]
+        pred_bout_length_filters = [np.array(pred_bout_lengths[pid]) >= min_bout_length for pid in range(self.n_preds)]
+
+        discarded_bouts_length = [np.array(pred_bout_bounds[pid])[np.logical_not(pred_bout_length_filters[pid])].tolist() for pid in range(self.n_preds)]
+        pred_bout_bounds_filtered = [np.array(pred_bout_bounds[pid])[pred_bout_length_filters[pid]].tolist() for pid in range(self.n_preds)]
+
+        print(f"--> {np.sum([len(pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
+
+        print(f"Discarding bouts with speed less than {speed_threshold} for more than {speed_tolerance*100}% of observations")
+        pred_datas_vel = self.compute_predator_speed()
+        pred_bouts_vel = [[pred_datas_vel[pid][pred_bout_bounds_filtered[pid][i][0]:pred_bout_bounds_filtered[pid][i][1]] for i in range(len(pred_bout_bounds_filtered[pid]))] for pid in range(self.n_preds)]
+        pred_bout_speed_filters = [np.array([not np.sum(np.array(pred_bouts_vel[pid][i]) < speed_threshold)/len(pred_bouts_vel[pid][i]) > speed_tolerance for i in range(len(pred_bouts_vel[pid]))]) for pid in range(self.n_preds)]
+
+        discarded_bouts_speed = [np.array(pred_bout_bounds_filtered[pid])[np.logical_not(pred_bout_speed_filters[pid])] for pid in range(self.n_preds)]
+        pred_bout_bounds_filtered = [np.array(pred_bout_bounds_filtered[pid])[pred_bout_speed_filters[pid]] for pid in range(self.n_preds)]
+
+        print(f"--> {np.sum([len(pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
+
+        self.pred_bout_bounds = pred_bout_bounds_filtered
+        pred_bout_bounds_filtered = list(itertools.chain.from_iterable(pred_bout_bounds_filtered))
+        self.pred_datas_arr_bouts = [np.vstack([pred_data_arr[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered]) for pred_data_arr in self.pred_datas_arr]
         self.agent_datas_arr_bouts = [np.vstack(
-            [agent_data_arr[preds_bout_bound_filtered[0]:preds_bout_bound_filtered[1]] for preds_bout_bound_filtered in
-             preds_bout_bounds_filtered]) for agent_data_arr in self.agent_datas_arr]
+            [agent_data_arr[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered]) for agent_data_arr in self.agent_datas_arr]
         self.timestamps_bouts = np.concatenate(
-            [self.timestamps[preds_bout_bound_filtered[0]:preds_bout_bound_filtered[1]] for preds_bout_bound_filtered in
-             preds_bout_bounds_filtered])
-        self.agent_com_bouts = np.concatenate([self.agent_com[preds_bout_bound_filtered[0]:preds_bout_bound_filtered[1]] for preds_bout_bound_filtered in
-             preds_bout_bounds_filtered])
+            [self.timestamps[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered])
+        self.agent_com_bouts = np.concatenate([self.agent_com[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered])
+
+
+        self.pred_bout_bounds_discarded = [discarded_bouts_length, discarded_bouts_speed]
+        pred_bout_bounds_discarded = [list(itertools.chain.from_iterable(self.pred_bout_bounds_discarded[i])) for i in range(len(self.pred_bout_bounds_discarded))]
+
+        self.pred_datas_arr_bouts_discarded = [[np.vstack(
+            [pred_data_arr[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
+             pred_bout_bounds_discarded[i]]) for pred_data_arr in self.pred_datas_arr] for i in range(len(self.pred_bout_bounds_discarded))]
+        self.agent_datas_arr_bouts_discarded = [[np.vstack(
+            [agent_data_arr[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
+             pred_bout_bounds_discarded[i]]) for agent_data_arr in self.agent_datas_arr] for i in range(len(self.pred_bout_bounds_discarded))]
+        self.timestamps_bouts_discarded = [np.concatenate(
+            [self.timestamps[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
+             pred_bout_bounds_discarded[i]]) for i in range(len(self.pred_bout_bounds_discarded))]
+        self.agent_com_bouts_discarded = [np.concatenate(
+            [self.agent_com[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
+             pred_bout_bounds_discarded[i]]) for i in range(len(self.pred_bout_bounds_discarded))]
 
 
 if __name__ == "__main__":
@@ -264,17 +309,17 @@ if __name__ == "__main__":
         file_path = f"./CoBeHumanExperimentsData/{round_id}/{round_types[round_type_id-1][:2].upper()}/{round_id}_{round_types[round_type_id-1][:2].upper()}.csv"
         round_types[round_type_id - 1] = round_types[round_type_id -1][:2].upper()
 
-    exp = Round(file_path, n_preds=2 if round_type_id == 3 else 1, tolerance=0.7, margin=10)
-    #import matplotlib.pyplot as plt
-    #plt.hist(np.diff(exp.timesteps), bins=50)
-    #plt.show()
-    #plt.hist(np.diff(exp.timestamps), bins=50)
-    #plt.show()
+    exp = Round(file_path, n_preds=2 if round_type_id == 3 else 1,
+                dist_tolerance=0.7, margin=10, min_bout_length=30,
+                speed_tolerance=0.15, speed_threshold=5.)
+
     exp_plotter = RoundPlotter(exp, mac=True)
-    exp_plotter.plot_metrics(time_window_dur=2, smoothing_args={'kernel': gaussian, 'window_size': 100},
-                             #save=True, # saving does not seem to work yet
-                             out_file_path=f"./CoBeHumanExperimentsDataAnonymized/{round_id}/{round_types[round_type_id-1]}/{round_id}_{round_types[round_type_id-1][:2].upper()}.mp4",
-                             com_only=True)
-    exp_plotter.plot_predator_acc_smoothings(time_window_dur=2, window_size=40, com_only=True)
-    exp_plotter.plot_bout_trajectories()
-    exp_plotter.plot_bout_division(com_only=True)
+    #exp_plotter.plot_metrics(time_window_dur=2, smoothing_args={'kernel': gaussian, 'window_size': 100},
+    #                         #save=True, # saving does not seem to work yet
+    #                         out_file_path=f"./CoBeHumanExperimentsDataAnonymized/{round_id}/{round_types[round_type_id-1]}/{round_id}_{round_types[round_type_id-1][:2].upper()}.mp4",
+    #                         com_only=True)
+    #exp_plotter.plot_predator_acc_smoothings(time_window_dur=2, window_size=40, com_only=True)
+    #exp_plotter.plot_bout_trajectories(discarded=False)
+    #exp_plotter.plot_bout_trajectories(discarded=True, filter_number=0)  # minimum bout length filter
+    #exp_plotter.plot_bout_trajectories(discarded=True, filter_number=1)  # speed filter
+    exp_plotter.plot_bout_division(com_only=True, separate_predators=True)
