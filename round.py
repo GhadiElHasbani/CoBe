@@ -24,7 +24,8 @@ class Round:
                  margin: int = 0,
                  min_bout_length: int = 2,
                  speed_threshold: float = 0.,
-                 speed_tolerance: float = 1.):
+                 speed_tolerance: float = 1.,
+                 absolute_speed_threshold: float = None):
         # Save experiment parameters
         self.file_path = file_path
         self.T_start = T_start
@@ -135,8 +136,10 @@ class Round:
         self.agent_datas_arr_bouts_discarded = None
         self.timestamps_bouts_discarded = None
         self.agent_com_bouts_discarded = None
-        self.segment_into_bouts(dist_tolerance=dist_tolerance, margin=margin, min_bout_length=min_bout_length,
-                                speed_threshold=speed_threshold, speed_tolerance=speed_tolerance)
+        self.segment_into_bouts(dist_tolerance=dist_tolerance, margin=margin,
+                                min_bout_length=min_bout_length,
+                                speed_threshold=speed_threshold, speed_tolerance=speed_tolerance,
+                                absolute_speed_threshold=absolute_speed_threshold)
 
         print("Round Summary:")
         print(f"-> fs: {self.avg_fs}, dt = {1/self.avg_fs}")
@@ -243,7 +246,8 @@ class Round:
                            margin: int = 0,
                            min_bout_length: int = 2,
                            speed_threshold: float = 0.,
-                           speed_tolerance: float = 1.):
+                           speed_tolerance: float = 1.,
+                           absolute_speed_threshold: float = None):
         dist_threshold = dist_tolerance*self.width/2
 
         print(f"Segmenting bouts using threshold of {dist_threshold}, with a margin of {margin} observations, on predator distance from arena center {self.center}")
@@ -253,13 +257,15 @@ class Round:
         temp = [get_bounds(pred_points_during_bouts, margin=margin) for pred_points_during_bouts in pred_points_during_bouts]
         pred_bout_bounds = [temp_el[0] for temp_el in temp]
 
+        pred_bout_bounds_discarded = []
+
         print(f"--> found {np.sum([len(pred_bout_bounds[pid]) for pid in range(self.n_preds)])}")
 
         print(f"Discarding bouts with less than {min_bout_length} observations")
         pred_bout_lengths = [temp_el[1] for temp_el in temp]
         pred_bout_length_filters = [np.array(pred_bout_lengths[pid]) >= min_bout_length for pid in range(self.n_preds)]
 
-        discarded_bouts_length = [np.array(pred_bout_bounds[pid])[np.logical_not(pred_bout_length_filters[pid])].tolist() for pid in range(self.n_preds)]
+        pred_bout_bounds_discarded.append([np.array(pred_bout_bounds[pid])[np.logical_not(pred_bout_length_filters[pid])].tolist() for pid in range(self.n_preds)])
         pred_bout_bounds_filtered = [np.array(pred_bout_bounds[pid])[pred_bout_length_filters[pid]].tolist() for pid in range(self.n_preds)]
 
         print(f"--> {np.sum([len(pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
@@ -269,10 +275,36 @@ class Round:
         pred_bouts_vel = [[pred_datas_vel[pid][pred_bout_bounds_filtered[pid][i][0]:pred_bout_bounds_filtered[pid][i][1]] for i in range(len(pred_bout_bounds_filtered[pid]))] for pid in range(self.n_preds)]
         pred_bout_speed_filters = [np.array([not np.sum(np.array(pred_bouts_vel[pid][i]) < speed_threshold)/len(pred_bouts_vel[pid][i]) > speed_tolerance for i in range(len(pred_bouts_vel[pid]))]) for pid in range(self.n_preds)]
 
-        discarded_bouts_speed = [np.array(pred_bout_bounds_filtered[pid])[np.logical_not(pred_bout_speed_filters[pid])] for pid in range(self.n_preds)]
+        pred_bout_bounds_discarded.append([np.array(pred_bout_bounds_filtered[pid])[np.logical_not(pred_bout_speed_filters[pid])] for pid in range(self.n_preds)])
         pred_bout_bounds_filtered = [np.array(pred_bout_bounds_filtered[pid])[pred_bout_speed_filters[pid]] for pid in range(self.n_preds)]
 
         print(f"--> {np.sum([len(pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
+        if absolute_speed_threshold is not None:
+            print(f"Discarding bouts with speed greater than {absolute_speed_threshold}")
+
+            pred_dists_to_com = self.compute_predator_distance_to_agent_com()
+            pred_dists_to_border = self.compute_predator_distance_to_border()
+            pred_bout_abs_speed_filters = [[], []]
+            for pid in range(self.n_preds):
+                for pred_bout_bound in pred_bout_bounds_filtered[pid]:
+                    pred_bouts_vel = [pred_datas_vel[pid][pred_bout_bound[0]:pred_bout_bound[1]] for pid in range(self.n_preds)]
+
+                    pred_bout_abs_speed_filter = True
+
+                    for pid2 in range(self.n_preds):
+                        if np.any(pred_bouts_vel[pid2] > absolute_speed_threshold):
+                            invalid_val_ids = np.where(pred_bouts_vel[pid2] > absolute_speed_threshold)
+                            if pid == pid2:
+                                dist_filter = np.all(pred_dists_to_border[pid2][pred_bout_bound[0]:pred_bout_bound[1]][invalid_val_ids] < 0.2*self.width/2)
+                            else:
+                                dist_filter = np.all(pred_dists_to_com[pid2][pred_bout_bound[0]:pred_bout_bound[1]][invalid_val_ids] > 0.3*self.width/2)
+                            pred_bout_abs_speed_filter = pred_bout_abs_speed_filter and dist_filter
+                    pred_bout_abs_speed_filters[pid].append(pred_bout_abs_speed_filter)
+
+            pred_bout_bounds_discarded.append([np.array(pred_bout_bounds_filtered[pid])[np.logical_not(pred_bout_abs_speed_filters[pid])] for pid in range(self.n_preds)])
+            pred_bout_bounds_filtered = [np.array(pred_bout_bounds_filtered[pid])[pred_bout_abs_speed_filters[pid]] for pid in range(self.n_preds)]
+
+            print(f"--> {np.sum([len(pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
 
         self.pred_bout_bounds = pred_bout_bounds_filtered
         pred_bout_bounds_filtered = list(itertools.chain.from_iterable(pred_bout_bounds_filtered))
@@ -283,8 +315,9 @@ class Round:
             [self.timestamps[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered])
         self.agent_com_bouts = np.concatenate([self.agent_com[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered])
 
+        # discarded bouts
+        self.pred_bout_bounds_discarded = pred_bout_bounds_discarded
 
-        self.pred_bout_bounds_discarded = [discarded_bouts_length, discarded_bouts_speed]
         pred_bout_bounds_discarded = [list(itertools.chain.from_iterable(pred_bout_bounds_discarded[i])) for i in range(len(pred_bout_bounds_discarded))]
 
         self.pred_datas_arr_bouts_discarded = [[np.vstack(
@@ -306,7 +339,7 @@ if __name__ == "__main__":
 
     round_id = "2837465091"
     round_types = ["P1", "P2", "Shared", "P1R1", "P1R2", "P1R3"]
-    round_type_id = 3
+    round_type_id = 2
     file_path = f"./CoBeHumanExperimentsData/{round_id}/{round_types[round_type_id-1] if round_type_id < 4 else round_types[round_type_id-1][:2].upper()}/{round_id}_{round_types[round_type_id-1][:2].upper() if round_type_id < 4 else round_types[round_type_id-1]}.csv"
 
     if not os.path.exists(file_path):
@@ -315,7 +348,7 @@ if __name__ == "__main__":
 
     exp = Round(file_path, n_preds=2 if round_type_id == 3 else 1,
                 dist_tolerance=0.7, margin=10, min_bout_length=30,
-                speed_tolerance=0.15, speed_threshold=5.)
+                speed_tolerance=0.15, speed_threshold=5., absolute_speed_threshold=70)
 
     exp_plotter = RoundPlotter(exp, mac=True)
     exp_plotter.plot_metrics(time_window_dur=2, smoothing_args={'kernel': gaussian, 'window_size': 100},
