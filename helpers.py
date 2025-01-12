@@ -98,8 +98,9 @@ def get_bounds(arr: NDArray[bool], margin: int = 0) -> Tuple[List[Tuple[int, int
 
     def update_current_end(i: int, margin: int, bounds: List, durations: List):
         current_end = min([len(arr) - 1, i + margin])
-        bounds.append((current_start, current_end + 1))
-        durations.append(current_end + 1 - current_start)
+        if not current_start == 0 and not current_end == len(arr) - 1:
+            bounds.append((current_start, current_end + 1))
+            durations.append(current_end + 1 - current_start)
 
     for i in range(len(arr)):
         if arr[i]:
@@ -115,6 +116,7 @@ def get_bounds(arr: NDArray[bool], margin: int = 0) -> Tuple[List[Tuple[int, int
                     current_start = update_current_start(i, margin)
 
     return bounds, durations
+
 
 def write_column_to_csv(file_path: str, column: Iterable, column_name: str):
     out_file = '/'.join(file_path.split('/')[:-1]) + file_path.split('/')[-1].split('.')[-2] + '_t.' + file_path.split('/')[-1].split('.')[-1]
