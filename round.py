@@ -194,16 +194,11 @@ class Round:
 
     def compute_acceleration(self, datas_vel: List[NDArray[float]],
                              smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
+        datas_acc = [np.insert(np.diff(data_vel) / (np.diff(self.timestamps)), 0, [0., ]) for data_vel in datas_vel]
         if smooth:
-            if smoothing_args is None:
-                smoothing_args = {'smoothing_method': 'window',
-                                  'kernel': lambda x, i, b: 1,
-                                  'window_size': 40}
-            datas_acc = [np.insert(smooth_array(np.diff(data_vel) / (np.diff(self.timestamps)), **smoothing_args), 0, [0.,]) for data_vel in datas_vel]
-        else:
-            datas_acc = [np.insert(np.diff(data_vel) / (np.diff(self.timestamps)), 0, [0.,]) for data_vel in datas_vel]
+            datas_acc = smooth_metric(datas=datas_acc, smoothing_args=smoothing_args)
 
-        return datas_acc
+        return [np.insert(data_acc, 0, [0., ]) for data_acc in datas_acc]
 
     def compute_agent_acceleration(self, smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
         agent_datas_vel = self.compute_agent_speed()
@@ -236,10 +231,12 @@ class Round:
 
         return pred_dist_to_center
 
-    def compute_predator_attack_angle(self) -> List[NDArray[float]]:
-        pred_attack_angles = [180 - compute_angle(self.agent_com[:-1], pred_data_arr[:-1], pred_data_arr[1]) for pred_data_arr in self.pred_datas_arr]
+    def compute_predator_attack_angle(self, smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
+        preds_attack_angles = [compute_angle(self.agent_com[:-1], pred_data_arr[:-1], pred_data_arr[1]) for pred_data_arr in self.pred_datas_arr]
+        if smooth:
+            preds_attack_angles = smooth_metric(datas=preds_attack_angles, smoothing_args=smoothing_args)
 
-        return pred_attack_angles
+        return [np.insert(pred_attack_angles, len(pred_attack_angles), [0., ]) for pred_attack_angles in preds_attack_angles]
 
     def segment_into_bouts(self,
                            dist_tolerance: float = 0.9,

@@ -1,4 +1,4 @@
-from typing import List, Tuple, Callable, Iterable
+from typing import List, Tuple, Callable, Iterable, Dict
 import numpy as np
 from numpy._typing import ArrayLike
 from numpy.typing import NDArray
@@ -41,7 +41,7 @@ def butterworth_smoother(ts: NDArray,
     return y
 
 
-def smooth_array(ts: NDArray,
+def smooth_array(ts: NDArray[float],
                  smoothing_method: str = 'window',
                  window_size: int = 40,
                  stride: int = 1,
@@ -62,6 +62,16 @@ def smooth_array(ts: NDArray,
 
     return smoothed_ts[::stride]
 
+
+def smooth_metric(datas: List[NDArray[float]],
+                  smoothing_args: Dict = None) -> List[NDArray[float]]:
+    if smoothing_args is None:
+        smoothing_args = {'smoothing_method': 'window',
+                          'kernel': lambda x, i, b: 1,
+                          'window_size': 40}
+    datas_acc = [smooth_array(ts=data, **smoothing_args) for data in datas]
+
+    return datas_acc
 
 def shortest_dist_to_polygon(vertices: List[Tuple[float, float]], points: NDArray[float]) -> NDArray[float]:
     poly = Polygon(vertices)

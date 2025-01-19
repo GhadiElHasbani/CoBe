@@ -100,11 +100,16 @@ class RoundPlotter:
 
     def update_metric_ax_specs(self, data_list: List[NDArray[float]], ax: plt.Axes,
                                t: int, t_start: int, time_window_dur: float,
-                               metric: str, max_abs_val: float = None):
-        if max_abs_val is None:
-            max_abs_val = np.nanmax([np.nanmax(abs(data)) for data in data_list])
-        ax.set_ylim(np.nanmax([np.nanmin([np.nanmin(data[t_start:t + 1]) for data in data_list]), -max_abs_val]),
-                    np.nanmin([np.nanmax([np.nanmax(data[t_start:t + 1]) for data in data_list]), max_abs_val]))
+                               metric: str, max_abs_val: float = None, keep_y_axis_stable: bool = False):
+
+        if keep_y_axis_stable:
+            ax.set_ylim(np.nanmin([np.nanmin(data) for data in data_list]),
+                        np.nanmax([np.nanmax(data) for data in data_list]))
+        else:
+            if max_abs_val is None:
+                max_abs_val = np.nanmax([np.nanmax(abs(data)) for data in data_list])
+            ax.set_ylim(np.nanmax([np.nanmin([np.nanmin(data[t_start:t + 1]) for data in data_list]), -max_abs_val]),
+                        np.nanmin([np.nanmax([np.nanmax(data[t_start:t + 1]) for data in data_list]), max_abs_val]))
         ax.set_xlim(self.round.timestamps[t] - 2 * time_window_dur / 3,
                     self.round.timestamps[t] + time_window_dur / 3)
         ax.set_xlabel("Time [s]")
@@ -171,12 +176,15 @@ class RoundPlotter:
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
                                         metric="distance from closest border")
             # Predator distance to border axes
+            self.update_predator_lines(pred_datas_att_smoothed, ax=args_dict['ax_att'],
+                                       lines=[args_dict[f'att_smoothed_{pid}'] for pid in range(self.round.n_preds)],
+                                       t=t, t_start=t_start)
             self.update_predator_lines(pred_datas_att, ax=args_dict['ax_att'],
                                        lines=[args_dict[f'att_{pid}'] for pid in range(self.round.n_preds)],
-                                       t=t, t_start=t_start)
+                                       t=t, t_start=t_start, linestyle='--', alpha=0.6)
             self.update_metric_ax_specs(pred_datas_att, ax=args_dict['ax_att'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
-                                        metric="attack angle")
+                                        metric="attack angle", keep_y_axis_stable=True)
 
             return args_dict
 
@@ -197,7 +205,8 @@ class RoundPlotter:
         pred_datas_acc = self.round.compute_predator_acceleration(smooth=False)
         pred_datas_com = self.round.compute_predator_distance_to_agent_com()
         pred_datas_bor = self.round.compute_predator_distance_to_border()
-        pred_datas_att = self.round.compute_predator_attack_angle()
+        pred_datas_att_smoothed = self.round.compute_predator_attack_angle(smoothing_args=smoothing_args)
+        pred_datas_att = self.round.compute_predator_attack_angle(smooth=False)
 
         # speed
         ax_vel = fig.add_subplot(gs[0, 1])
@@ -223,6 +232,7 @@ class RoundPlotter:
             args_dict[f'acc_smoothed_{pid}'], = ax_acc.plot([], [], color=self.colors[pid][:-1])
             args_dict[f'com_{pid}'], = ax_com.plot([], [], color=self.colors[pid][:-1])
             args_dict[f'bor_{pid}'], = ax_bor.plot([], [], color=self.colors[pid][:-1])
+            args_dict[f'att_smoothed_{pid}'], = ax_att.plot([], [], color=self.colors[pid][:-1])
             args_dict[f'att_{pid}'], = ax_att.plot([], [], color=self.colors[pid][:-1])
 
         ani = animation.FuncAnimation(fig=fig, func=update, frames=len(self.round.timestamps), interval=1, fargs=(args_dict,))
