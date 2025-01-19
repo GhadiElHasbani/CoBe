@@ -119,8 +119,6 @@ class Round:
             self.agent_datas = [np.array(agent_data)[dup_filter] for agent_data in self.agent_datas]
             self.agent_datas_arr = [np.array(agent_data_arr)[dup_filter] for agent_data_arr in self.agent_datas_arr]
 
-        self.unit_time = np.array(self.timesteps) / np.array(self.timestamps)
-
         # storing agent center of mass over time
         self.agent_com = np.mean(np.array(self.agent_datas_arr), axis=0)
 
@@ -179,10 +177,13 @@ class Round:
         avg_fs = sum(framerates_per_min) / len(framerates_per_min)
         return avg_fs
 
-    def compute_speed(self, datas_arr: List[NDArray]) -> List[NDArray[float]]:
+    def compute_speed(self, datas_arr: List[NDArray[float]]) -> List[NDArray[float]]:
         return [
             np.insert(np.sqrt(np.sum(np.diff(data_arr, axis=0) ** 2, axis=1)) / (np.diff(self.timestamps)), 0, [0.,]) for
             data_arr in datas_arr]
+
+    def compute_velocity(self, datas_arr: List[NDArray[float]]) -> List[NDArray[float]]:
+        return [np.vstack([np.diff(data_arr, axis=0) / (np.diff(self.timestamps).reshape((-1, 1))), [0., 0.]]) for data_arr in datas_arr]
 
     def compute_agent_speed(self) -> List[NDArray[float]]:
         agent_datas_vel = self.compute_speed(self.agent_datas_arr)

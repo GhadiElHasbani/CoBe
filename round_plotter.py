@@ -40,8 +40,8 @@ class RoundPlotter:
 
 
     def plot_agent_trajectories(self, agent_data: Union[List[Tuple[float, float]], NDArray[float]], ax: plt.Axes, t: int, cmap: str = 'viridis'):
-        ax.scatter([x[0] for x in agent_data][:t], [x[1] for x in agent_data][:t], self.round.timestamps[:t],
-                   c=range(t),
+        ax.scatter([x[0] for x in agent_data][:t+1], [x[1] for x in agent_data][:t+1], self.round.timestamps[:t+1],
+                   c=range(t+1),
                    cmap=cmap, s=0.1)
 
     def update_agent_trajectories(self, agent_datas: List[List[Tuple[float, float]]], ax: plt.Axes, t: int, z: float,
@@ -64,13 +64,15 @@ class RoundPlotter:
             if not com_only:
                 self.plot_agent_trajectories(agent_data, ax=ax, t=t)
 
-    def update_predator_trajectories(self, pred_datas: List[List[Tuple[float, float]]], ax: plt.Axes, t: int, z: float, labels: List[str] = None) -> None:
+    def update_predator_trajectories(self, pred_datas: List[List[Tuple[float, float]]],
+                                     ax: plt.Axes, t: int, z: float, labels: List[str] = None,
+                                     show_pred_vel_vector: bool = True, pred_datas_vel: List[NDArray[float]] = None) -> None:
         for pid in range(self.round.n_preds):
             pred_data = pred_datas[pid]
 
             # showing predator trajectory with some colormap
-            ax.scatter([x[0] for x in pred_data][:t], [x[1] for x in pred_data][:t], self.round.timestamps[:t],
-                       c=range(t),
+            ax.scatter([x[0] for x in pred_data][:t+1], [x[1] for x in pred_data][:t+1], self.round.timestamps[:t+1],
+                       c=range(t+1),
                        cmap=self.colors[pid],
                        s=0.5)
 
@@ -79,13 +81,17 @@ class RoundPlotter:
 
             ax.scatter(x, y, z, s=100, marker='x', color=self.colors[pid][:-1], label=labels[pid] if labels is not None else None)
 
+            if show_pred_vel_vector:
+                ax.quiver(X=pred_data[t][0], Y=pred_data[t][1], Z=z, U=pred_datas_vel[pid][t][0], V=pred_datas_vel[pid][t][1], W=0.,
+                          color=self.colors[pid][:-1], linestyle='--')
+
         if labels is not None:
             ax.legend()
 
     def update_trajectories(self, agent_datas: List[List[Tuple[float, float]]], pred_datas: List[List[Tuple[float, float]]],
                             ax: plt.Axes, t: int, z: float, pred_labels: List[str] = None,
                             show_arena_borders: bool = True, com_only: bool = False,
-                            agent_com=NDArray[float]) -> None:
+                            agent_com=NDArray[float], pred_datas_vel: List[NDArray[float]] = None, show_pred_vel_vector: bool = True) -> None:
         self.update_trajectories_ax_specs(ax, t=t)
 
         if show_arena_borders:
@@ -96,7 +102,8 @@ class RoundPlotter:
         self.update_agent_trajectories(agent_datas=agent_datas, ax=ax, t=t, z=z, com_only=com_only, agent_com=agent_com)
 
         # predator data
-        self.update_predator_trajectories(pred_datas=pred_datas, ax=ax, t=t, z=z, labels=pred_labels)
+        self.update_predator_trajectories(pred_datas=pred_datas, ax=ax, t=t, z=z, labels=pred_labels,
+                                          show_pred_vel_vector=show_pred_vel_vector, pred_datas_vel=pred_datas_vel)
 
     def update_metric_ax_specs(self, data_list: List[NDArray[float]], ax: plt.Axes,
                                t: int, t_start: int, time_window_dur: float,
@@ -129,26 +136,27 @@ class RoundPlotter:
 
     def plot_metrics(self, time_window_dur: float = 2000., smoothing_args: Dict = None,
                      max_abs_speed: float = None, max_abs_acceleration: float = None,
-                     com_only: bool = False,
+                     com_only: bool = False, show_pred_vel_vector: bool = True,
                      save: bool = False, out_file_path: str = "metrics.mp4") -> None:
         def update(t: int, args_dict: Dict) -> Dict:
             t_start = max([0, find_nearest(self.round.timestamps, self.round.timestamps[t] - 2*time_window_dur / 3)])
             z = self.round.timestamps[t]
 
             args_dict['ax'].cla()
-            args_dict['ax_vel'].cla()
+            args_dict['ax_spe'].cla()
             args_dict['ax_acc'].cla()
             args_dict['ax_com'].cla()
             args_dict['ax_bor'].cla()
             args_dict['ax_att'].cla()
 
             self.update_trajectories(agent_datas=self.round.agent_datas, pred_datas=self.round.pred_datas,
+                                     pred_datas_vel=pred_datas_vel, show_pred_vel_vector=show_pred_vel_vector,
                                      ax=args_dict['ax'], t=t, z=z, com_only=com_only, agent_com=self.round.agent_com)
 
             # Speed axes
-            self.update_predator_lines(pred_datas_vel, ax=args_dict['ax_vel'], lines=[args_dict[f'vel_{pid}'] for pid in range(self.round.n_preds)],
+            self.update_predator_lines(pred_datas_spe, ax=args_dict['ax_spe'], lines=[args_dict[f'vel_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start)
-            self.update_metric_ax_specs(pred_datas_vel, ax=args_dict['ax_vel'],
+            self.update_metric_ax_specs(pred_datas_spe, ax=args_dict['ax_spe'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
                                         metric="speed", max_abs_val=max_abs_speed)
             # Acceleration axes
@@ -200,7 +208,8 @@ class RoundPlotter:
                               'kernel': lambda x, i, b: 1,
                               'window_size': 40}
         # Compute metrics
-        pred_datas_vel = self.round.compute_predator_speed()
+        pred_datas_vel = self.round.compute_velocity(self.round.pred_datas_arr)
+        pred_datas_spe = self.round.compute_predator_speed()
         pred_datas_acc_smoothed = self.round.compute_predator_acceleration(smoothing_args=smoothing_args)
         pred_datas_acc = self.round.compute_predator_acceleration(smooth=False)
         pred_datas_com = self.round.compute_predator_distance_to_agent_com()
@@ -209,7 +218,7 @@ class RoundPlotter:
         pred_datas_att = self.round.compute_predator_attack_angle(smooth=False)
 
         # speed
-        ax_vel = fig.add_subplot(gs[0, 1])
+        ax_spe = fig.add_subplot(gs[0, 1])
         # acceleration
         ax_acc = fig.add_subplot(gs[1, 1])
         # predator distance to agents center of mass
@@ -220,14 +229,14 @@ class RoundPlotter:
         ax_att = fig.add_subplot(gs[4, 1])
 
         args_dict = {'ax': ax,
-                     'ax_vel': ax_vel,
+                     'ax_spe': ax_spe,
                      'ax_acc': ax_acc,
                      'ax_com': ax_com,
                      'ax_bor': ax_bor,
                      'ax_att': ax_att}
 
         for pid in range(self.round.n_preds):
-            args_dict[f'vel_{pid}'], = ax_vel.plot([], [], color=self.colors[pid][:-1])
+            args_dict[f'vel_{pid}'], = ax_spe.plot([], [], color=self.colors[pid][:-1])
             args_dict[f'acc_{pid}'], = ax_acc.plot([], [], color=self.colors[pid][:-1])
             args_dict[f'acc_smoothed_{pid}'], = ax_acc.plot([], [], color=self.colors[pid][:-1])
             args_dict[f'com_{pid}'], = ax_com.plot([], [], color=self.colors[pid][:-1])
@@ -260,6 +269,7 @@ class RoundPlotter:
             args_dict['ax_dts'].cla()
 
             self.update_trajectories(agent_datas=self.round.agent_datas, pred_datas=self.round.pred_datas,
+                                     show_pred_vel_vector=False,
                                      ax=args_dict['ax'], t=t, z=z, com_only=com_only, agent_com=self.round.agent_com)
 
             # Raw predator acceleration
