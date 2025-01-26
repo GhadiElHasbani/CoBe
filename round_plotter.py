@@ -504,8 +504,8 @@ class RoundPlotter:
 
 
         args_dict['time_bar'] = args_dict['ax_bout_div'].axvline(self.round.timestamps[0])
-        pred_bout_starts = [[self.round.pred_bout_bounds[pid][i][0] for i in range(len(self.round.pred_bout_bounds[pid]))] for pid in range(self.round.n_preds)]
-        pred_bout_ends = [[self.round.pred_bout_bounds[pid][i][1] for i in range(len(self.round.pred_bout_bounds[pid]))] for pid in range(self.round.n_preds)]
+        pred_bout_starts = [[self.round.pred_bout_bounds_filtered[pid][i][0] for i in range(len(self.round.pred_bout_bounds_filtered[pid]))] for pid in range(self.round.n_preds)]
+        pred_bout_ends = [[self.round.pred_bout_bounds_filtered[pid][i][1] for i in range(len(self.round.pred_bout_bounds_filtered[pid]))] for pid in range(self.round.n_preds)]
 
         ani = animation.FuncAnimation(fig=fig, func=update, frames=len(self.round.timestamps), interval=1, fargs=(args_dict,))
 
@@ -517,4 +517,57 @@ class RoundPlotter:
 
         plt.tight_layout()
         plt.show()
+
+    def plot_bout_metric(self, metric: Iterable[Iterable[float]],
+                         reference_times: Iterable[Iterable[float]], reference_ids: Iterable[Iterable[float]],
+                         overlay_bouts: bool = False):
+        fig = plt.figure()
+        gs = GridSpec.GridSpec(self.round.n_preds, 1)
+
+        for pid in range(self.round.n_preds):
+            ax = fig.add_subplot(gs[pid, :], sharex=ax if pid > 0 and overlay_bouts else None)
+            first = True
+            count = 0
+            min_reference_id = np.min(np.array(reference_ids[pid])[np.array(reference_ids[pid]) >= 0])
+            for i, (bout_start, bout_end) in enumerate(self.round.pred_bout_bounds_filtered[pid]):
+                reference_time = reference_times[pid][i]
+                if reference_time >= 0:
+                    count += 1
+                    if first:
+                        mean_metric_relative_time = self.round.timestamps[bout_start:bout_end] - reference_time
+                        mean_metric = metric[pid][bout_start:bout_end][reference_ids[pid][i] - min_reference_id:reference_ids[pid][i]+1]
+                        last_bout_end = self.round.timestamps[bout_start]
+                        first = False
+                    else:
+                        mean_metric_relative_time = self.round.timestamps[bout_start:bout_end] - reference_time if mean_metric_relative_time[0] < (self.round.timestamps[bout_start:bout_end] - reference_time)[0] else mean_metric_relative_time
+                        mean_metric += metric[pid][bout_start:bout_end][reference_ids[pid][i] - min_reference_id:reference_ids[pid][i]+1]
+
+                    alpha = (int(self.round.pred_bout_ids[pid][i].split('_')[0])+1)/len(self.round.pred_bout_bounds[pid])
+                    ax.plot(self.round.timestamps[bout_start:bout_end] - reference_time * overlay_bouts - (self.round.timestamps[bout_start] - last_bout_end - 3) * (not overlay_bouts), metric[pid][bout_start:bout_end],
+                            color=self.colors[pid][:-1], alpha=alpha)
+                    if not overlay_bouts:
+                        ax.scatter(reference_time - (self.round.timestamps[bout_start] - last_bout_end - 3), metric[pid][bout_start:bout_end][self.round.timestamps[bout_start:bout_end] == reference_time],
+                                   color=self.colors[pid][:-1], alpha=alpha)
+                        ax.axvline(reference_time - (self.round.timestamps[bout_start] - last_bout_end - 3), color='k', linestyle='--')
+                        ax.text(reference_time - (self.round.timestamps[bout_start] - last_bout_end - 3), -.05, self.round.pred_bout_ids[pid][i], color=self.colors[pid][:-1], transform=ax.get_xaxis_transform(),
+                                ha='center', va='top', fontsize=7.8)
+                    else:
+                        ax.scatter(0, metric[pid][bout_start:bout_end][self.round.timestamps[bout_start:bout_end] == reference_time],
+                                   color=self.colors[pid][:-1], alpha=alpha)
+
+                    last_bout_end = self.round.timestamps[bout_end] - (self.round.timestamps[bout_start] - last_bout_end - 3)
+            mean_metric /= count
+            if overlay_bouts:
+                ax.plot(mean_metric_relative_time[mean_metric_relative_time <= 0], mean_metric, color='black', linestyle='-.')
+                ax.axvline(0, color='k', linestyle='--')
+                ax.set_xlabel("Time relative to reference point")
+            else:
+                ax.set_xticks([])
+
+            ax.set_ylabel("Metric")
+
+        plt.tight_layout()
+        plt.show()
+
+
 
