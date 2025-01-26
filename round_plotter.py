@@ -44,7 +44,7 @@ class RoundPlotter:
                    c=range(t+1),
                    cmap=cmap, s=0.1)
 
-    def update_agent_trajectories(self, agent_datas: List[List[Tuple[float, float]]], ax: plt.Axes, t: int, z: float,
+    def update_agent_trajectories(self, agents_data: List[List[Tuple[float, float]]], ax: plt.Axes, t: int, z: float,
                                   com_only: bool = False, agent_com: NDArray[float] = None, max_n_agents: int = None) -> None:
         def plot_agent_markers(agent_data: Union[List[Tuple[float, float]], NDArray[float]], ax: plt.Axes, t: int, z: float, marker: str='o', s:int=25,
                                c: str = None):
@@ -58,7 +58,7 @@ class RoundPlotter:
             self.plot_agent_trajectories(agent_com, ax=ax, t=t, cmap='Greys')
 
         for aid in range(min([max_n_agents if max_n_agents is not None else self.round.n_agents, self.round.n_agents])):
-            agent_data = agent_datas[aid]
+            agent_data = agents_data[aid]
             plot_agent_markers(agent_data, ax=ax, t=t, z=z)
 
             if not com_only:
@@ -66,7 +66,7 @@ class RoundPlotter:
 
     def update_predator_trajectories(self, pred_datas: List[List[Tuple[float, float]]],
                                      ax: plt.Axes, t: int, z: float, labels: List[str] = None,
-                                     show_pred_vel_vector: bool = True, pred_datas_vel: List[NDArray[float]] = None) -> None:
+                                     show_pred_vel_vector: bool = False, pred_datas_vel: List[NDArray[float]] = None) -> None:
         for pid in range(self.round.n_preds):
             pred_data = pred_datas[pid]
 
@@ -82,16 +82,17 @@ class RoundPlotter:
             ax.scatter(x, y, z, s=100, marker='x', color=self.colors[pid][:-1], label=labels[pid] if labels is not None else None)
 
             if show_pred_vel_vector:
-                ax.quiver(X=pred_data[t][0], Y=pred_data[t][1], Z=z, U=pred_datas_vel[pid][t][0], V=pred_datas_vel[pid][t][1], W=0.,
+                vel_vector_norm = np.linalg.norm(pred_datas_vel[pid][t])/4
+                ax.quiver(X=pred_data[t][0], Y=pred_data[t][1], Z=z, U=pred_datas_vel[pid][t][0]/vel_vector_norm, V=pred_datas_vel[pid][t][1]/vel_vector_norm, W=0.,
                           color=self.colors[pid][:-1], linestyle='--')
 
         if labels is not None:
             ax.legend()
 
-    def update_trajectories(self, agent_datas: List[List[Tuple[float, float]]], pred_datas: List[List[Tuple[float, float]]],
+    def update_trajectories(self, agents_data: List[List[Tuple[float, float]]], pred_datas: List[List[Tuple[float, float]]],
                             ax: plt.Axes, t: int, z: float, pred_labels: List[str] = None,
                             show_arena_borders: bool = True, com_only: bool = False,
-                            agent_com=NDArray[float], pred_datas_vel: List[NDArray[float]] = None, show_pred_vel_vector: bool = True) -> None:
+                            agent_com=NDArray[float], pred_datas_vel: List[NDArray[float]] = None, show_pred_vel_vector: bool = False) -> None:
         self.update_trajectories_ax_specs(ax, t=t)
 
         if show_arena_borders:
@@ -99,7 +100,7 @@ class RoundPlotter:
             self.update_arena_borders(ax=ax, z=z)
 
         # agent data
-        self.update_agent_trajectories(agent_datas=agent_datas, ax=ax, t=t, z=z, com_only=com_only, agent_com=agent_com)
+        self.update_agent_trajectories(agents_data=agents_data, ax=ax, t=t, z=z, com_only=com_only, agent_com=agent_com)
 
         # predator data
         self.update_predator_trajectories(pred_datas=pred_datas, ax=ax, t=t, z=z, labels=pred_labels,
@@ -136,7 +137,7 @@ class RoundPlotter:
 
     def plot_metrics(self, time_window_dur: float = 2000., smoothing_args: Dict = None,
                      max_abs_speed: float = None, max_abs_acceleration: float = None,
-                     com_only: bool = False, show_pred_vel_vector: bool = True,
+                     com_only: bool = False, show_pred_vel_vector: bool = False,
                      save: bool = False, out_file_path: str = "metrics.mp4") -> None:
         def update(t: int, args_dict: Dict) -> Dict:
             t_start = max([0, find_nearest(self.round.timestamps, self.round.timestamps[t] - 2*time_window_dur / 3)])
@@ -149,7 +150,7 @@ class RoundPlotter:
             args_dict['ax_bor'].cla()
             args_dict['ax_att'].cla()
 
-            self.update_trajectories(agent_datas=self.round.agent_datas, pred_datas=self.round.pred_datas,
+            self.update_trajectories(agents_data=self.round.agents_data, pred_datas=self.round.pred_datas,
                                      pred_datas_vel=pred_datas_vel, show_pred_vel_vector=show_pred_vel_vector,
                                      ax=args_dict['ax'], t=t, z=z, com_only=com_only, agent_com=self.round.agent_com)
 
@@ -183,7 +184,7 @@ class RoundPlotter:
             self.update_metric_ax_specs(pred_datas_bor, ax=args_dict['ax_bor'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
                                         metric="distance from closest border")
-            # Predator distance to border axes
+            # Predator attack angle
             self.update_predator_lines(pred_datas_att_smoothed, ax=args_dict['ax_att'],
                                        lines=[args_dict[f'att_smoothed_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start)
@@ -208,7 +209,7 @@ class RoundPlotter:
                               'kernel': lambda x, i, b: 1,
                               'window_size': 40}
         # Compute metrics
-        pred_datas_vel = self.round.compute_velocity(self.round.pred_datas_arr)
+        pred_datas_vel = self.round.compute_velocity(self.round.pred_data_arrs)
         pred_datas_spe = self.round.compute_predator_speed()
         pred_datas_acc_smoothed = self.round.compute_predator_acceleration(smoothing_args=smoothing_args)
         pred_datas_acc = self.round.compute_predator_acceleration(smooth=False)
@@ -246,16 +247,16 @@ class RoundPlotter:
 
         ani = animation.FuncAnimation(fig=fig, func=update, frames=len(self.round.timestamps), interval=1, fargs=(args_dict,))
 
+        if save:
+            print("Saving...")
+            # saving to m4 using ffmpeg writer
+            ani.save(out_file_path)
+            plt.close()
+
         plt.tight_layout()
         plt.show()
 
-        if save:
-            # saving to m4 using ffmpeg writer
-            ani.save(out_file_path, writer='ffmpeg')
-            plt.close()
-
-    def plot_predator_acc_smoothings(self, time_window_dur: float = 2000., window_size: int = 40,
-                                     com_only: bool = True,
+    def plot_predator_acc_smoothings(self, time_window_dur: float = 2000., window_size: int = 40, com_only: bool = True,
                                      save: bool = False, out_file_path: str = "acc_smoothings.mp4") -> None:
         def update(t: int, args_dict: Dict) -> Dict:
             t_start = max([0, find_nearest(self.round.timestamps, self.round.timestamps[t] - 2 * time_window_dur / 3)])
@@ -268,8 +269,7 @@ class RoundPlotter:
             args_dict['ax_acc_bw'].cla()
             args_dict['ax_dts'].cla()
 
-            self.update_trajectories(agent_datas=self.round.agent_datas, pred_datas=self.round.pred_datas,
-                                     show_pred_vel_vector=False,
+            self.update_trajectories(agents_data=self.round.agents_data, pred_datas=self.round.pred_datas,
                                      ax=args_dict['ax'], t=t, z=z, com_only=com_only, agent_com=self.round.agent_com)
 
             # Raw predator acceleration
@@ -372,21 +372,23 @@ class RoundPlotter:
 
         ani = animation.FuncAnimation(fig=fig, func=update, frames=len(self.round.timestamps), interval=1, fargs=(args_dict,))
 
+        if save:
+            print("Saving...")
+            # saving to m4 using ffmpeg writer
+            ani.save(out_file_path)
+            plt.close()
+
         plt.tight_layout()
         plt.show()
 
-        if save:
-            # saving to m4 using ffmpeg writer
-            ani.save(out_file_path, writer='ffmpeg')
-            plt.close()
-
-    def plot_bout_trajectories(self, com_only: bool = True, discarded: bool = False, filter_number: int = 0):
+    def plot_bout_trajectories(self, com_only: bool = True, discarded: bool = False, filter_number: int = 0,
+                               save: bool = False, out_file_path: str = "bout_trajectories.mp4"):
         def update(t: int, args_dict: Dict) -> Dict:
             z = self.round.timestamps[t]
 
             args_dict['ax'].cla()
 
-            self.update_trajectories(agent_datas=agent_datas,
+            self.update_trajectories(agents_data=agents_data,
                                      pred_datas=pred_datas,
                                      ax=args_dict['ax'], t=t, z=z,
                                      com_only=com_only, agent_com=agent_com)
@@ -400,12 +402,18 @@ class RoundPlotter:
         ax = fig.add_subplot(gs[0, 0], projection='3d')
 
         args_dict = {'ax': ax}
-        agent_datas = self.round.agent_datas_arr_bouts_discarded[filter_number] if discarded else self.round.agent_datas_arr_bouts
+        agents_data = self.round.agent_data_arrs_bouts_discarded[filter_number] if discarded else self.round.agent_data_arrs_bouts
         agent_com = self.round.agent_com_bouts_discarded[filter_number] if discarded else self.round.agent_com_bouts
-        pred_datas = self.round.pred_datas_arr_bouts_discarded[filter_number] if discarded else self.round.pred_datas_arr_bouts
+        pred_datas = self.round.pred_data_arrs_bouts_discarded[filter_number] if discarded else self.round.pred_data_arrs_bouts
         timestamps = self.round.timestamps_bouts_discarded[filter_number] if discarded else self.round.timestamps_bouts
 
         ani = animation.FuncAnimation(fig=fig, func=update, frames=len(timestamps), interval=1, fargs=(args_dict,))
+
+        if save:
+            print("Saving...")
+            # saving to m4 using ffmpeg writer
+            ani.save(out_file_path)
+            plt.close()
 
         plt.tight_layout()
         plt.show()
@@ -501,10 +509,12 @@ class RoundPlotter:
 
         ani = animation.FuncAnimation(fig=fig, func=update, frames=len(self.round.timestamps), interval=1, fargs=(args_dict,))
 
+        if save:
+            print("Saving...")
+            # saving to m4 using ffmpeg writer
+            ani.save(out_file_path)
+            plt.close()
+
         plt.tight_layout()
         plt.show()
 
-        if save:
-            # saving to m4 using ffmpeg writer
-            ani.save(out_file_path, writer='ffmpeg')
-            plt.close()
