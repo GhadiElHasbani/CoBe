@@ -19,7 +19,7 @@ def gaussian(x: NDArray[float], mu: float, sigma: float) -> NDArray[float]:
     return np.exp(-(x - mu)**2 / (2*sigma**2))
 
 
-def kernel_smoother(ts: NDArray,
+def kernel_smoother(ts: NDArray[float],
                     window_size: int,
                     kernel: Callable = lambda x, i, b: 1) -> NDArray[float]:
     smoothed_ts = np.zeros(len(ts))
@@ -31,7 +31,7 @@ def kernel_smoother(ts: NDArray,
     return smoothed_ts
 
 
-def butterworth_smoother(ts: NDArray,
+def butterworth_smoother(ts: NDArray[float],
                          fs: float,
                          f_start: float,
                          f_stop: float,
@@ -50,7 +50,7 @@ def smooth_array(ts: NDArray[float],
                  bw_order: int = 5,
                  bw_fstart: float = None,
                  bw_fstop: float = None
-                ) -> NDArray[float]:
+                 ) -> NDArray[float]:
     if smoothing_method == 'window':
         print(f"smoothing with kernel {kernel}")
         smoothed_ts = kernel_smoother(ts, window_size, kernel)
@@ -63,15 +63,17 @@ def smooth_array(ts: NDArray[float],
     return smoothed_ts[::stride]
 
 
-def smooth_metric(datas: List[NDArray[float]],
+def smooth_metric(data_arrs: List[NDArray[float]],
                   smoothing_args: Dict = None) -> List[NDArray[float]]:
     if smoothing_args is None:
         smoothing_args = {'smoothing_method': 'window',
                           'kernel': lambda x, i, b: 1,
                           'window_size': 40}
-    datas_acc = [smooth_array(ts=data, **smoothing_args) for data in datas]
 
-    return datas_acc
+    data_arrs_smooth = [smooth_array(ts=data_arr, **smoothing_args) for data_arr in data_arrs]
+
+    return data_arrs_smooth
+
 
 def shortest_dist_to_polygon(vertices: List[Tuple[float, float]], points: NDArray[float]) -> NDArray[float]:
     poly = Polygon(vertices)
