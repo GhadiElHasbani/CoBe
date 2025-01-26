@@ -25,7 +25,8 @@ class Round:
                  min_bout_length: int = 2,
                  speed_threshold: float = 0.,
                  speed_tolerance: float = 1.,
-                 absolute_speed_threshold: float = None):
+                 absolute_speed_threshold: float = None,
+                 bout_ids_to_remove: Iterable[str] = None):
         # Save experiment parameters
         self.file_path = file_path
         self.T_start = T_start
@@ -72,8 +73,8 @@ class Round:
         #assert [ctimes[i] for i in sorted(range(len(timesteps)), key=lambda x: timesteps[x])] == [ctimes[i] for i in sorted(range(len(ctimes)), key=lambda x: ctimes[x])]
 
         # retrieving data for a single agent
-        self.agent_datas = []
-        self.agent_datas_arr = []
+        self.agents_data = []
+        self.agent_data_arrs = []
 
         for agent_id in range(self.n_agents):
             agent_x = self.db.get_field_values("x" + str(agent_id))
@@ -84,12 +85,12 @@ class Round:
             # slicing to length
             agent_data = agent_data[self.T_start:self.T]
             agent_data_arr = convert_list_of_tuples_to_array(agent_data)
-            self.agent_datas.append(agent_data)
-            self.agent_datas_arr.append(agent_data_arr)
+            self.agents_data.append(agent_data)
+            self.agent_data_arrs.append(agent_data_arr)
 
         # retrieving data for predator agent(s)
         self.pred_datas = []
-        self.pred_datas_arr = []
+        self.pred_data_arrs = []
 
         for pred_id in range(self.n_preds):
 
@@ -102,7 +103,7 @@ class Round:
             pred_data = pred_data[self.T_start:self.T]
             pred_data_arr = convert_list_of_tuples_to_array(pred_data)
             self.pred_datas.append(pred_data)
-            self.pred_datas_arr.append(pred_data_arr)
+            self.pred_data_arrs.append(pred_data_arr)
 
         # sorting and slicing timesteps and timestamps
         self.timesteps = np.array(sorted(timesteps)[T_start:T])
@@ -115,29 +116,35 @@ class Round:
             self.timesteps = self.timesteps[dup_filter]
             self.timestamps = self.timestamps[dup_filter]
             self.pred_datas = [np.array(pred_data)[dup_filter] for pred_data in self.pred_datas]
-            self.pred_datas_arr = [np.array(pred_data_arr)[dup_filter] for pred_data_arr in self.pred_datas_arr]
-            self.agent_datas = [np.array(agent_data)[dup_filter] for agent_data in self.agent_datas]
-            self.agent_datas_arr = [np.array(agent_data_arr)[dup_filter] for agent_data_arr in self.agent_datas_arr]
+            self.pred_data_arrs = [np.array(pred_data_arr)[dup_filter] for pred_data_arr in self.pred_data_arrs]
+            self.agents_data = [np.array(agent_data)[dup_filter] for agent_data in self.agents_data]
+            self.agent_data_arrs = [np.array(agent_data_arr)[dup_filter] for agent_data_arr in self.agent_data_arrs]
 
         # storing agent center of mass over time
-        self.agent_com = np.mean(np.array(self.agent_datas_arr), axis=0)
+        self.agent_com = np.mean(np.array(self.agent_data_arrs), axis=0)
 
         # create bouts
         self.pred_bout_bounds = None
-        self.pred_datas_arr_bouts = None
-        self.agent_datas_arr_bouts = None
+        self.pred_bout_lengths = None
+        self.pred_data_arrs_bouts = None
+        self.pred_vel_arrs_bouts = None
+        self.agent_data_arrs_bouts = None
         self.timestamps_bouts = None
         self.agent_com_bouts = None
+        self.pred_bout_ids = None
 
-        self.pred_bout_bounds_discarded = None
-        self.pred_datas_arr_bouts_discarded = None
-        self.agent_datas_arr_bouts_discarded = None
+        self.pred_bout_bounds_filtered = None
+        self.pred_bout_bounds_discarded = []
+        self.pred_data_arrs_bouts_discarded = None
+        self.agent_data_arrs_bouts_discarded = None
         self.timestamps_bouts_discarded = None
         self.agent_com_bouts_discarded = None
         self.segment_into_bouts(dist_tolerance=dist_tolerance, margin=margin,
                                 min_bout_length=min_bout_length,
                                 speed_threshold=speed_threshold, speed_tolerance=speed_tolerance,
-                                absolute_speed_threshold=absolute_speed_threshold)
+                                absolute_speed_threshold=absolute_speed_threshold,
+                                bout_ids_to_remove=bout_ids_to_remove)
+        self.compute_bout_fountain_start()
 
         print("Round Summary:")
         print(f"-> fs: {self.avg_fs}, dt = {1/self.avg_fs}")
@@ -177,35 +184,38 @@ class Round:
         avg_fs = sum(framerates_per_min) / len(framerates_per_min)
         return avg_fs
 
-    def compute_speed(self, datas_arr: List[NDArray[float]]) -> List[NDArray[float]]:
+    def compute_speed(self, data_arrs: List[NDArray[float]]) -> List[NDArray[float]]:
         return [
             np.insert(np.sqrt(np.sum(np.diff(data_arr, axis=0) ** 2, axis=1)) / (np.diff(self.timestamps)), 0, [0.,]) for
-            data_arr in datas_arr]
+            data_arr in data_arrs]
 
-    def compute_velocity(self, datas_arr: List[NDArray[float]]) -> List[NDArray[float]]:
-        return [np.vstack([np.diff(data_arr, axis=0) / (np.diff(self.timestamps).reshape((-1, 1))), [0., 0.]]) for data_arr in datas_arr]
+    def compute_velocity(self, data_arrs: List[NDArray[float]]) -> List[NDArray[float]]:
+        return [np.vstack([np.diff(data_arr, axis=0) / (np.diff(self.timestamps).reshape((-1, 1))), [0., 0.]]) for data_arr in data_arrs]
+
+    def compute_predator_velocity(self):
+        return self.compute_velocity(self.pred_data_arrs)
 
     def compute_agent_speed(self) -> List[NDArray[float]]:
-        agent_datas_vel = self.compute_speed(self.agent_datas_arr)
-        return agent_datas_vel
+        agents_data_speed = self.compute_speed(self.agent_data_arrs)
+        return agents_data_speed
 
     def compute_predator_speed(self) -> List[NDArray[float]]:
-        pred_datas_vel = self.compute_speed(self.pred_datas_arr)
-        return pred_datas_vel
+        pred_datas_speed = self.compute_speed(self.pred_data_arrs)
+        return pred_datas_speed
 
     def compute_acceleration(self, datas_vel: List[NDArray[float]],
                              smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
         datas_acc = [np.insert(np.diff(data_vel) / (np.diff(self.timestamps)), 0, [0., ]) for data_vel in datas_vel]
         if smooth:
-            datas_acc = smooth_metric(datas=datas_acc, smoothing_args=smoothing_args)
+            datas_acc = smooth_metric(data_arrs=datas_acc, smoothing_args=smoothing_args)
 
         return [np.insert(data_acc, 0, [0., ]) for data_acc in datas_acc]
 
     def compute_agent_acceleration(self, smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
-        agent_datas_vel = self.compute_agent_speed()
-        agent_datas_acc = self.compute_acceleration(agent_datas_vel, smooth, smoothing_args)
+        agents_data_vel = self.compute_agent_speed()
+        agents_data_acc = self.compute_acceleration(agents_data_vel, smooth, smoothing_args)
 
-        return agent_datas_acc
+        return agents_data_acc
 
     def compute_predator_acceleration(self, smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
         pred_datas_vel = self.compute_predator_speed()
@@ -213,12 +223,12 @@ class Round:
         return pred_datas_acc
 
     def compute_predator_distance_to_agent_com(self) -> List[NDArray[float]]:
-        pred_dist_to_agent_com = [np.sqrt(np.sum((pred_data_arr - self.agent_com)**2, axis = 1)) for pred_data_arr in self.pred_datas_arr]
+        pred_dist_to_agent_com = [np.sqrt(np.sum((pred_data_arr - self.agent_com)**2, axis = 1)) for pred_data_arr in self.pred_data_arrs]
 
         return pred_dist_to_agent_com
 
     def compute_predator_distance_to_border(self) -> List[NDArray[float]]: # to implement
-        pred_dist_to_border = [shortest_dist_to_polygon(self.arena_points, pred_data) for pred_data in self.pred_datas_arr]
+        pred_dist_to_border = [shortest_dist_to_polygon(self.arena_points, pred_data) for pred_data in self.pred_data_arrs]
 
         return pred_dist_to_border
 
@@ -228,14 +238,14 @@ class Round:
         return agent_com_dist_to_border
 
     def compute_predator_distance_to_center(self) -> List[NDArray[float]]:
-        pred_dist_to_center = [euclidean_distance(np.array(self.center).reshape((-1,1)), pred_data_arr.T) for pred_data_arr in self.pred_datas_arr]
+        pred_dist_to_center = [euclidean_distance(np.array(self.center).reshape((-1,1)), pred_data_arr.T) for pred_data_arr in self.pred_data_arrs]
 
         return pred_dist_to_center
 
     def compute_predator_attack_angle(self, smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
-        preds_attack_angles = [compute_angle(self.agent_com[:-1], pred_data_arr[:-1], pred_data_arr[1]) for pred_data_arr in self.pred_datas_arr]
+        preds_attack_angles = [compute_angle(self.agent_com[:-1], pred_data_arr[:-1], pred_data_arr[1]) for pred_data_arr in self.pred_data_arrs]
         if smooth:
-            preds_attack_angles = smooth_metric(datas=preds_attack_angles, smoothing_args=smoothing_args)
+            preds_attack_angles = smooth_metric(data_arrs=preds_attack_angles, smoothing_args=smoothing_args)
 
         return [np.insert(pred_attack_angles, len(pred_attack_angles), [0., ]) for pred_attack_angles in preds_attack_angles]
 
@@ -245,7 +255,8 @@ class Round:
                            min_bout_length: int = 2,
                            speed_threshold: float = 0.,
                            speed_tolerance: float = 1.,
-                           absolute_speed_threshold: float = None):
+                           absolute_speed_threshold: float = None,
+                           bout_ids_to_remove: List[str] = None):
         dist_threshold = dist_tolerance*self.width/2
 
         print(f"Segmenting bouts using threshold of {dist_threshold}, with a margin of {margin} observations, on predator distance from arena center {self.center}")
@@ -253,77 +264,109 @@ class Round:
 
         pred_points_during_bouts = [pred_dist_to_center < dist_threshold for pred_dist_to_center in pred_dist_to_center]
         temp = [get_bounds(pred_points_during_bouts, margin=margin) for pred_points_during_bouts in pred_points_during_bouts]
-        pred_bout_bounds = [temp_el[0] for temp_el in temp]
+        self.pred_bout_bounds = [temp_el[0] for temp_el in temp]
+        self.pred_bout_lengths = [temp_el[1] for temp_el in temp]
+        self.pred_bout_ids = [np.arange(len(self.pred_bout_bounds[pid])).astype(str) + np.full(len(self.pred_bout_bounds[pid]), '_' + str(pid)) for pid in range(self.n_preds)]
+        self.pred_bout_bounds_filtered = self.pred_bout_bounds
 
-        pred_bout_bounds_discarded = []
+        print(f"--> found {np.sum([len(self.pred_bout_bounds[pid]) for pid in range(self.n_preds)])}")
 
-        print(f"--> found {np.sum([len(pred_bout_bounds[pid]) for pid in range(self.n_preds)])}")
+        if min_bout_length is not None:
+            self.apply_bout_length_filter(min_bout_length=min_bout_length)
 
+        if speed_threshold is not None and speed_tolerance is not None:
+            self.apply_bout_low_speed_filter(speed_threshold=speed_threshold, speed_tolerance=speed_tolerance)
+
+        if absolute_speed_threshold is not None:
+            self.apply_bout_high_speed_filter(absolute_speed_threshold=absolute_speed_threshold)
+
+        if bout_ids_to_remove is not None:
+            self.remove_bout_by_id(ids=bout_ids_to_remove)
+
+        self.organize_bout_info()
+
+    def filter_bouts(self, filters: Iterable[Iterable[bool]]):
+        self.pred_bout_bounds_discarded.append(
+            [np.array(self.pred_bout_bounds_filtered[pid])[np.logical_not(filters[pid])] for pid in
+             range(self.n_preds)])
+        self.pred_bout_bounds_filtered = [
+            np.array(self.pred_bout_bounds_filtered[pid])[filters[pid]] for pid in
+            range(self.n_preds)]
+        self.pred_bout_ids = [self.pred_bout_ids[pid][filters[pid]] for pid in range(self.n_preds)]
+
+    def apply_bout_length_filter(self, min_bout_length: int):
         print(f"Discarding bouts with less than {min_bout_length} observations")
-        pred_bout_lengths = [temp_el[1] for temp_el in temp]
-        pred_bout_length_filters = [np.array(pred_bout_lengths[pid]) >= min_bout_length for pid in range(self.n_preds)]
 
-        pred_bout_bounds_discarded.append([np.array(pred_bout_bounds[pid])[np.logical_not(pred_bout_length_filters[pid])].tolist() for pid in range(self.n_preds)])
-        pred_bout_bounds_filtered = [np.array(pred_bout_bounds[pid])[pred_bout_length_filters[pid]].tolist() for pid in range(self.n_preds)]
+        pred_bout_length_filters = [np.array(self.pred_bout_lengths[pid]) >= min_bout_length for pid in
+                                    range(self.n_preds)]
 
-        print(f"--> {np.sum([len(pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
+        self.filter_bouts(filters=pred_bout_length_filters)
 
+        print(f"--> {np.sum([len(self.pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
+
+    def apply_bout_low_speed_filter(self, speed_threshold: float, speed_tolerance: float):
         print(f"Discarding bouts with speed less than {speed_threshold} for more than {speed_tolerance*100}% of observations")
         pred_datas_vel = self.compute_predator_speed()
-        pred_bouts_vel = [[pred_datas_vel[pid][pred_bout_bounds_filtered[pid][i][0]:pred_bout_bounds_filtered[pid][i][1]] for i in range(len(pred_bout_bounds_filtered[pid]))] for pid in range(self.n_preds)]
+        pred_bouts_vel = [[pred_datas_vel[pid][self.pred_bout_bounds_filtered[pid][i][0]:self.pred_bout_bounds_filtered[pid][i][1]] for i in range(len(self.pred_bout_bounds_filtered[pid]))] for pid in range(self.n_preds)]
         pred_bout_speed_filters = [np.array([not np.sum(np.array(pred_bouts_vel[pid][i]) < speed_threshold)/len(pred_bouts_vel[pid][i]) > speed_tolerance for i in range(len(pred_bouts_vel[pid]))]) for pid in range(self.n_preds)]
 
-        pred_bout_bounds_discarded.append([np.array(pred_bout_bounds_filtered[pid])[np.logical_not(pred_bout_speed_filters[pid])] for pid in range(self.n_preds)])
-        pred_bout_bounds_filtered = [np.array(pred_bout_bounds_filtered[pid])[pred_bout_speed_filters[pid]] for pid in range(self.n_preds)]
+        self.filter_bouts(filters=pred_bout_speed_filters)
 
-        print(f"--> {np.sum([len(pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
-        if absolute_speed_threshold is not None:
-            print(f"Discarding bouts with speed greater than {absolute_speed_threshold}")
+        print(f"--> {np.sum([len(self.pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
 
-            pred_dists_to_com = self.compute_predator_distance_to_agent_com()
-            pred_dists_to_border = self.compute_predator_distance_to_border()
-            pred_bout_abs_speed_filters = [[], []]
-            for pid in range(self.n_preds):
-                for pred_bout_bound in pred_bout_bounds_filtered[pid]:
-                    pred_bouts_vel = [pred_datas_vel[pid][pred_bout_bound[0]:pred_bout_bound[1]] for pid in range(self.n_preds)]
+    def apply_bout_high_speed_filter(self, absolute_speed_threshold: float):
+        print(f"Discarding bouts with speed greater than {absolute_speed_threshold}")
 
-                    pred_bout_abs_speed_filter = True
+        pred_datas_vel = self.compute_predator_speed()
+        pred_dists_to_com = self.compute_predator_distance_to_agent_com()
+        pred_dists_to_border = self.compute_predator_distance_to_border()
+        pred_bout_abs_speed_filters = [[] for _ in range(self.n_preds)]
+        for pid in range(self.n_preds):
+            for pred_bout_bound in self.pred_bout_bounds_filtered[pid]:
+                pred_bouts_vel = [pred_datas_vel[pid][pred_bout_bound[0]:pred_bout_bound[1]] for pid in
+                                  range(self.n_preds)]
 
-                    for pid2 in range(self.n_preds):
-                        if np.any(pred_bouts_vel[pid2] > absolute_speed_threshold):
-                            invalid_val_ids = np.where(pred_bouts_vel[pid2] > absolute_speed_threshold)
-                            if pid == pid2:
-                                dist_filter = np.all(pred_dists_to_border[pid2][pred_bout_bound[0]:pred_bout_bound[1]][invalid_val_ids] < 0.2*self.width/2)
-                            else:
-                                dist_filter = np.all(pred_dists_to_com[pid2][pred_bout_bound[0]:pred_bout_bound[1]][invalid_val_ids] > 0.3*self.width/2)
-                            pred_bout_abs_speed_filter = pred_bout_abs_speed_filter and dist_filter
-                    pred_bout_abs_speed_filters[pid].append(pred_bout_abs_speed_filter)
+                pred_bout_abs_speed_filter = True
 
-            pred_bout_bounds_discarded.append([np.array(pred_bout_bounds_filtered[pid])[np.logical_not(pred_bout_abs_speed_filters[pid])] for pid in range(self.n_preds)])
-            pred_bout_bounds_filtered = [np.array(pred_bout_bounds_filtered[pid])[pred_bout_abs_speed_filters[pid]] for pid in range(self.n_preds)]
+                for pid2 in range(self.n_preds):
+                    if np.any(pred_bouts_vel[pid2] > absolute_speed_threshold):
+                        invalid_val_ids = np.where(pred_bouts_vel[pid2] > absolute_speed_threshold)
+                        if pid == pid2:
+                            dist_filter = np.all(pred_dists_to_border[pid2][pred_bout_bound[0]:pred_bout_bound[1]][
+                                                     invalid_val_ids] < 0.2 * self.width / 2)
+                        else:
+                            dist_filter = np.all(pred_dists_to_com[pid2][pred_bout_bound[0]:pred_bout_bound[1]][
+                                                     invalid_val_ids] > 0.3 * self.width / 2)
+                        pred_bout_abs_speed_filter = pred_bout_abs_speed_filter and dist_filter
+                pred_bout_abs_speed_filters[pid].append(pred_bout_abs_speed_filter)
 
-            print(f"--> {np.sum([len(pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
+        self.filter_bouts(filters=pred_bout_abs_speed_filters)
 
-        self.pred_bout_bounds = pred_bout_bounds_filtered
-        pred_bout_bounds_filtered = list(itertools.chain.from_iterable(pred_bout_bounds_filtered))
-        self.pred_datas_arr_bouts = [np.vstack([pred_data_arr[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered]) for pred_data_arr in self.pred_datas_arr]
-        self.agent_datas_arr_bouts = [np.vstack(
-            [agent_data_arr[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered]) for agent_data_arr in self.agent_datas_arr]
+        print(f"--> {np.sum([len(self.pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
+
+    def remove_bout_by_id(self, ids: List[str]):
+        pred_bout_ids_filters = [np.logical_not(np.isin(self.pred_bout_ids[pid], ids)) for pid in range(self.n_preds)]
+
+        self.filter_bouts(filters=pred_bout_ids_filters)
+
+    def organize_bout_info(self):
+        pred_bout_bounds_filtered = list(itertools.chain.from_iterable(self.pred_bout_bounds_filtered))
+        self.pred_data_arrs_bouts = [np.vstack([pred_data_arr[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered]) for pred_data_arr in self.pred_data_arrs]
+        self.agent_data_arrs_bouts = [np.vstack(
+            [agent_data_arr[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered]) for agent_data_arr in self.agent_data_arrs]
         self.timestamps_bouts = np.concatenate(
             [self.timestamps[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered])
         self.agent_com_bouts = np.concatenate([self.agent_com[pred_bout_bound_filtered[0]:pred_bout_bound_filtered[1]] for pred_bout_bound_filtered in pred_bout_bounds_filtered])
 
         # discarded bouts
-        self.pred_bout_bounds_discarded = pred_bout_bounds_discarded
+        pred_bout_bounds_discarded = [list(itertools.chain.from_iterable(self.pred_bout_bounds_discarded[i])) for i in range(len(self.pred_bout_bounds_discarded))]
 
-        pred_bout_bounds_discarded = [list(itertools.chain.from_iterable(pred_bout_bounds_discarded[i])) for i in range(len(pred_bout_bounds_discarded))]
-
-        self.pred_datas_arr_bouts_discarded = [[np.vstack(
+        self.pred_data_arrs_bouts_discarded = [[np.vstack(
             [pred_data_arr[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
-             pred_bout_bounds_discarded[i]]) for pred_data_arr in self.pred_datas_arr] if len(pred_bout_bounds_discarded[i]) > 0 else [] for i in range(len(pred_bout_bounds_discarded))]
-        self.agent_datas_arr_bouts_discarded = [[np.vstack(
+             pred_bout_bounds_discarded[i]]) for pred_data_arr in self.pred_data_arrs] if len(pred_bout_bounds_discarded[i]) > 0 else [] for i in range(len(pred_bout_bounds_discarded))]
+        self.agent_data_arrs_bouts_discarded = [[np.vstack(
             [agent_data_arr[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
-             pred_bout_bounds_discarded[i]]) for agent_data_arr in self.agent_datas_arr] if len(pred_bout_bounds_discarded[i]) > 0 else [] for i in range(len(pred_bout_bounds_discarded))]
+             pred_bout_bounds_discarded[i]]) for agent_data_arr in self.agent_data_arrs] if len(pred_bout_bounds_discarded[i]) > 0 else [] for i in range(len(pred_bout_bounds_discarded))]
         self.timestamps_bouts_discarded = [np.concatenate(
             [self.timestamps[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
              pred_bout_bounds_discarded[i]]) if len(pred_bout_bounds_discarded[i]) > 0 else [] for i in range(len(pred_bout_bounds_discarded))]
@@ -346,7 +389,8 @@ if __name__ == "__main__":
 
     exp = Round(file_path, n_preds=2 if round_type_id == 3 else 1,
                 dist_tolerance=0.7, margin=10, min_bout_length=30,
-                speed_tolerance=0.15, speed_threshold=5., absolute_speed_threshold=70)
+                speed_tolerance=0.15, speed_threshold=5., absolute_speed_threshold=70,
+                bout_ids_to_remove=None)
 
     exp_plotter = RoundPlotter(exp, mac=True)
     exp_plotter.plot_metrics(time_window_dur=2, smoothing_args={'kernel': gaussian, 'window_size': 100},
