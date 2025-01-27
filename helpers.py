@@ -1,5 +1,6 @@
 from typing import List, Tuple, Callable, Iterable, Dict
 import numpy as np
+import pandas
 from numpy._typing import ArrayLike
 from numpy.typing import NDArray
 from shapely.geometry import Polygon, Point
@@ -15,18 +16,22 @@ def convert_array_to_list_of_tuples(array: NDArray) -> List[Tuple]:
     return list(map(tuple, array))
 
 
-def gaussian(x: NDArray[float], mu: float, sigma: float) -> NDArray[float]:
-    return np.exp(-(x - mu)**2 / (2*sigma**2))
+def gaussian(z: NDArray[float]) -> NDArray[float]:
+    return np.exp(z**2/2)/np.sqrt(2*np.pi)
 
 
 def kernel_smoother(ts: NDArray[float],
                     window_size: int,
-                    kernel: Callable = lambda x, i, b: 1) -> NDArray[float]:
+                    kernel: Callable = lambda z: 1) -> NDArray[float]:
+
     smoothed_ts = np.zeros(len(ts))
+
     for i in range(len(ts)):
         start = max([0, i - int(window_size / 2)])
-        stop = min([i + int(window_size / 2), len(ts)])
-        smoothed_ts[i] = np.sum(ts[start:stop] * kernel(ts[start:stop], ts[i], window_size / 2) / np.sum(kernel(ts[start:stop], ts[i], window_size / 2)))
+        end = min([i + int(window_size / 2), len(ts)])
+        for j, ts_j in enumerate(ts[start:end]):
+            w_ij = kernel((ts[i] - ts_j) / window_size) / np.sum([kernel((ts[i] - ts_k) / window_size) for ts_k in ts[start:end]])
+            smoothed_ts[i] += w_ij * ts_j
 
     return smoothed_ts
 
@@ -45,7 +50,7 @@ def smooth_array(ts: NDArray[float],
                  smoothing_method: str = 'window',
                  window_size: int = 40,
                  stride: int = 1,
-                 kernel: Callable = lambda x, i, b: 1,
+                 kernel: Callable = lambda z: 1,
                  fs: float = None,
                  bw_order: int = 5,
                  bw_fstart: float = None,
@@ -67,7 +72,7 @@ def smooth_metric(data_arrs: List[NDArray[float]],
                   smoothing_args: Dict = None) -> List[NDArray[float]]:
     if smoothing_args is None:
         smoothing_args = {'smoothing_method': 'window',
-                          'kernel': lambda x, i, b: 1,
+                          'kernel': lambda z: 1,
                           'window_size': 40}
 
     data_arrs_smooth = [smooth_array(ts=data_arr, **smoothing_args) for data_arr in data_arrs]

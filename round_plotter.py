@@ -1,4 +1,4 @@
-from typing import Dict, Union
+from typing import Union
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as GridSpec
 from matplotlib import animation
@@ -206,7 +206,7 @@ class RoundPlotter:
         ## Metric figures
         if smoothing_args is None:
             smoothing_args = {'smoothing_method': 'window',
-                              'kernel': lambda x, i, b: 1,
+                              'kernel': lambda z: 1,
                               'window_size': 40}
         # Compute metrics
         pred_datas_vel = self.round.compute_velocity(self.round.pred_data_arrs)
@@ -332,13 +332,18 @@ class RoundPlotter:
         pred_datas_acc = self.round.compute_predator_acceleration(smooth=False)
         pred_datas_acc_w = self.round.compute_predator_acceleration(smooth=True,
                                                                     smoothing_args={'smoothing_method': 'window',
-                                                                                        'kernel': lambda x, i, b: 1,
-                                                                                        'window_size': window_size})
-        pred_datas_acc_w_gaus = self.round.compute_predator_acceleration(smooth=True, smoothing_args={
-                'smoothing_method': 'window',
-                'kernel': gaussian, 'window_size': window_size})
-        pred_datas_acc_bw = self.round.compute_predator_acceleration(smooth=True, smoothing_args={
-                'smoothing_method': 'butterworth', 'fs': self.round.avg_fs/2, 'bw_fstart': 5, 'bw_fstop': 10, 'bw_order': 3})
+                                                                                    'kernel': lambda z: 1,
+                                                                                    'window_size': window_size})
+        pred_datas_acc_w_gaus = self.round.compute_predator_acceleration(smooth=True,
+                                                                         smoothing_args={'smoothing_method': 'window',
+                                                                                         'kernel': gaussian,
+                                                                                         'window_size': window_size})
+        pred_datas_acc_bw = self.round.compute_predator_acceleration(smooth=True,
+                                                                     smoothing_args={'smoothing_method': 'butterworth',
+                                                                                     'fs': self.round.avg_fs/2,
+                                                                                     'bw_fstart': 5,
+                                                                                     'bw_fstop': 10,
+                                                                                     'bw_order': 3})
 
         # speed
         ax_acc = fig.add_subplot(gs[0, 1])
@@ -352,11 +357,11 @@ class RoundPlotter:
         ax_dts = fig.add_subplot(gs[4, 1])
 
         args_dict = {'ax': ax,
-                         'ax_acc': ax_acc,
-                         'ax_acc_w': ax_acc_w,
-                         'ax_acc_w_gaus': ax_acc_w_gaus,
-                         'ax_acc_bw': ax_acc_bw,
-                         'ax_dts': ax_dts}
+                     'ax_acc': ax_acc,
+                     'ax_acc_w': ax_acc_w,
+                     'ax_acc_w_gaus': ax_acc_w_gaus,
+                     'ax_acc_bw': ax_acc_bw,
+                     'ax_dts': ax_dts}
 
         for pid in range(self.round.n_preds):
             args_dict[f'acc_{pid}'], = ax_acc.plot([], [], color=self.colors[pid][:-1])
@@ -435,8 +440,8 @@ class RoundPlotter:
                 if time_window_dur is not None:
                     if self.round.timestamps[bout_start] >= self.round.timestamps[t] + time_window_dur / 3:
                         break
-                    elif self.round.timestamps[bout_end] > self.round.timestamps[t] + time_window_dur / 3:
-                        bout_end = find_nearest(self.round.timestamps, self.round.timestamps[t] + time_window_dur / 3)
+                    #elif self.round.timestamps[bout_end] > self.round.timestamps[t] + time_window_dur / 3:
+                    #    bout_end = find_nearest(self.round.timestamps, self.round.timestamps[t] + time_window_dur / 3)
 
                 if separate_predators:
                     ax.barh(y_pos[pid], width=self.round.timestamps[bout_start] - left, left=left, color='grey')
@@ -444,8 +449,10 @@ class RoundPlotter:
                     min_bout_start = np.min([min_bout_start, self.round.timestamps[bout_start]])
                     max_bout_end = np.max([max_bout_end, self.round.timestamps[bout_end]])
                 left = self.round.timestamps[bout_end]
-                ax.text(x=self.round.timestamps[bout_start]+(self.round.timestamps[bout_end] - self.round.timestamps[bout_start])/2, y=(-0.85*pid if time_window_dur is None else 0) + (self.round.n_preds + 0.715 if separate_predators else 1.435), s=bout_id,
-                        c=self.colors[pid][:-1], size=3 if time_window_dur is None else 8, rotation=90, horizontalalignment='center', verticalalignment='center', rotation_mode='anchor')
+
+                if time_window_dur is None or (time_window_dur is not None and self.round.timestamps[bout_start] >= self.round.timestamps[t] - 2 * time_window_dur / 3):
+                    ax.text(x=self.round.timestamps[bout_start]+(self.round.timestamps[bout_end] - self.round.timestamps[bout_start])/2, y=(-0.85*pid if time_window_dur is None else 0) + (self.round.n_preds + 0.715 if separate_predators else 1.435), s=bout_id,
+                            c=self.colors[pid][:-1], size=3 if time_window_dur is None else 8, rotation=90, horizontalalignment='center', verticalalignment='center', rotation_mode='anchor')
                 ax.barh(y_pos[pid], width=self.round.timestamps[bout_end] - self.round.timestamps[bout_start], left=self.round.timestamps[bout_start], color=self.colors[pid][:-1], alpha=0.6 if not separate_predators else 1)
             if separate_predators:
                 ax.barh(y_pos[pid], width=self.round.timestamps[-1] - left, left=left, color='grey')
