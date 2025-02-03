@@ -202,9 +202,17 @@ class Round:
         agents_data_speed = self.compute_speed(self.agent_data_arrs)
         return agents_data_speed
 
+    def compute_agent_com_speed(self) -> NDArray[float]:
+        return self.compute_speed([self.agent_com])[0]
+
     def compute_predator_speed(self) -> List[NDArray[float]]:
-        pred_datas_speed = self.compute_speed(self.pred_data_arrs)
-        return pred_datas_speed
+        preds_speed = self.compute_speed(self.pred_data_arrs)
+        return preds_speed
+
+    def compute_predator_to_agent_com_speed_ratio(self) -> List[NDArray[float]]:
+        agent_com_speed = self.compute_agent_com_speed()
+        preds_speed = self.compute_predator_speed()
+        return [preds_speed[pid]/agent_com_speed for pid in range(self.n_preds)]
 
     def compute_acceleration(self, datas_vel: List[NDArray[float]],
                              smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
@@ -215,14 +223,14 @@ class Round:
         return [np.insert(data_acc, 0, [0., ]) for data_acc in datas_acc]
 
     def compute_agent_acceleration(self, smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
-        agents_data_vel = self.compute_agent_speed()
-        agents_data_acc = self.compute_acceleration(agents_data_vel, smooth, smoothing_args)
+        agents_data_speed = self.compute_agent_speed()
+        agents_data_acc = self.compute_acceleration(agents_data_speed, smooth, smoothing_args)
 
         return agents_data_acc
 
     def compute_predator_acceleration(self, smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
-        pred_datas_vel = self.compute_predator_speed()
-        pred_datas_acc = self.compute_acceleration(pred_datas_vel, smooth, smoothing_args)
+        pred_datas_speed = self.compute_predator_speed()
+        pred_datas_acc = self.compute_acceleration(pred_datas_speed, smooth, smoothing_args)
         return pred_datas_acc
 
     def compute_predator_distance_to_agent_com(self) -> List[NDArray[float]]:
@@ -245,7 +253,7 @@ class Round:
 
         return pred_dist_to_center
 
-    def compute_predator_attack_angle(self, smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
+    def compute_predator_attack_angle(self, smooth: bool = False, smoothing_args: Dict = None) -> List[NDArray[float]]:
         preds_attack_angles = [compute_angle(self.agent_com[:-1], pred_data_arr[:-1], pred_data_arr[1]) for pred_data_arr in self.pred_data_arrs]
         if smooth:
             preds_attack_angles = smooth_metric(data_arrs=preds_attack_angles, smoothing_args=smoothing_args)
