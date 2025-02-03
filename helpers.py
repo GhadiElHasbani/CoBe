@@ -162,6 +162,21 @@ def compute_angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> NDArray[float]
     cosine_angles = np.sum(ba * bc, axis=-1) / (np.linalg.norm(ba, axis=-1) * np.linalg.norm(bc, axis=-1))
     angles = np.arccos(cosine_angles)
 
-    return np.concatenate([np.degrees(angles), [np.degrees(angles)[-1]]])
+    return np.concatenate([np.degrees(angles), [np.degrees(angles)[-1]]]) if len(a.shape) > 1 else np.degrees(angles)
 
 
+def transpose_list_of_arrays(list_of_arrays: List[NDArray]) -> List[NDArray]:
+    return [np.vstack([arr[i] for arr in list_of_arrays]) for i in range(list_of_arrays[0].shape[0])]
+
+
+def get_perpendicular_vector(a: NDArray) -> NDArray:
+    b = np.empty_like(a)
+    b[0] = -a[1]
+    b[1] = a[0]
+
+
+    c = np.empty_like(a)
+    c[0] = a[1]
+    c[1] = -a[0]
+
+    return np.array([b, c])
