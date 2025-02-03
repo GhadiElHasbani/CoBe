@@ -26,7 +26,10 @@ class Round:
                  speed_threshold: float = 0.,
                  speed_tolerance: float = 1.,
                  absolute_speed_threshold: float = None,
-                 bout_ids_to_remove: Iterable[str] = None):
+                 bout_ids_to_remove: Iterable[str] = None,
+                 evasion_vel_angle_change_limit: float = 90.,
+                 evasion_pred_dist_to_com_limit: float = 0.4
+                 ):
         # Save experiment parameters
         self.file_path = file_path
         self.T_start = T_start
@@ -79,7 +82,7 @@ class Round:
         for agent_id in range(self.n_agents):
             agent_x = self.db.get_field_values("x" + str(agent_id))
             agent_y = self.db.get_field_values("y" + str(agent_id))
-            agent_data = [(agent_x[i], agent_y[i]) for i in range(len(timesteps))]
+            agent_data = [(agent_x[i] + self.center[0], agent_y[i] + self.center[1]) for i in range(len(timesteps))]
             # sorting agent data according to timesteps list
             agent_data = [agent_data[i] for i in sorted(range(len(timesteps)), key=lambda x: timesteps[x])]
             # slicing to length
@@ -93,10 +96,9 @@ class Round:
         self.pred_data_arrs = []
 
         for pred_id in range(self.n_preds):
-
             pred_x = self.db.get_field_values("prx" + str(pred_id))
             pred_y = self.db.get_field_values("pry" + str(pred_id))
-            pred_data = [(pred_x[i], pred_y[i]) for i in range(len(timesteps))]
+            pred_data = [(pred_x[i] + self.center[0], pred_y[i] + self.center[1]) for i in range(len(timesteps))]
             # sorting pred data according to timesteps list
             pred_data = [pred_data[i] for i in sorted(range(len(timesteps)), key=lambda x: timesteps[x])]
             # slicing to length
@@ -144,7 +146,8 @@ class Round:
                                 speed_threshold=speed_threshold, speed_tolerance=speed_tolerance,
                                 absolute_speed_threshold=absolute_speed_threshold,
                                 bout_ids_to_remove=bout_ids_to_remove)
-        self.compute_bout_fountain_start()
+        self.compute_bout_evasion_bounds(vel_angle_change_limit=evasion_vel_angle_change_limit,
+                                         pred_dist_to_com_limit=evasion_pred_dist_to_com_limit)
 
         print("Round Summary:")
         print(f"-> fs: {self.avg_fs}, dt = {1/self.avg_fs}")
@@ -248,6 +251,24 @@ class Round:
             preds_attack_angles = smooth_metric(data_arrs=preds_attack_angles, smoothing_args=smoothing_args)
 
         return [np.insert(pred_attack_angles, len(pred_attack_angles), [0., ]) for pred_attack_angles in preds_attack_angles]
+
+    def compute_preys_behind_predator(self):
+        pred_vel_arrs = self.compute_predator_velocity()
+
+        preys_behind = [np.zeros((len(self.timestamps), len(self.agents_data))) for _ in range(self.n_preds)]
+        for pid in range(self.n_preds):
+            for tid in range(len(self.timestamps)):
+                for aid in range(len(self.agents_data)):
+                    pred_vel_vec = pred_vel_arrs[pid][tid]
+                    agent_pos_vec = np.array(self.agents_data[aid][tid]) - self.pred_datas[pid][tid]
+                    preys_behind[pid][tid, aid] = 1 if agent_pos_vec.reshape((1, -1)) @ pred_vel_vec.reshape((-1, 1)) < 0 else 0
+
+        return preys_behind
+
+    def compute_n_preys_behind_predator(self):
+        preys_behind = self.compute_preys_behind_predator()
+
+        return [np.sum(preys_behind[pid], axis=-1) for pid in range(self.n_preds)]
 
     def segment_into_bouts(self,
                            dist_tolerance: float = 0.9,
@@ -374,6 +395,60 @@ class Round:
             [self.agent_com[pred_bout_bound_discarded[0]:pred_bout_bound_discarded[1]] for pred_bout_bound_discarded in
              pred_bout_bounds_discarded[i]]) if len(pred_bout_bounds_discarded[i]) > 0 else [] for i in range(len(pred_bout_bounds_discarded))]
 
+    def compute_bout_evasion_bounds(self,
+                                    vel_angle_change_limit: float = 90.,
+                                    pred_dist_to_com_limit: float = 0.4):
+        print("Computing bout evasion start times")
+        n_preys_behind_pred = self.compute_n_preys_behind_predator()
+        pred_vel_arrs = self.compute_predator_velocity()
+        pred_dist_to_com_arrs = self.compute_predator_distance_to_agent_com()
+
+        self.bout_evasion_start_times = [[] for _ in range(self.n_preds)]
+        self.bout_evasion_start_ids = [[] for _ in range(self.n_preds)]
+
+        self.bout_evasion_end_times = [[] for _ in range(self.n_preds)]
+        self.bout_evasion_end_ids = [[] for _ in range(self.n_preds)]
+        for pid in range(self.n_preds):
+            evasions_count = 0
+            for bout_start, bout_end in self.pred_bout_bounds_filtered[pid]:
+                n_preys_behind_pred_bout = n_preys_behind_pred[pid][bout_start:bout_end]
+                timestamps_bout = self.timestamps[bout_start:bout_end]
+                pred_dist_to_com_bout = pred_dist_to_com_arrs[pid][bout_start:bout_end]
+                pred_vel_bout = pred_vel_arrs[pid][bout_start:bout_end]
+                all_preys_in_front_prev = False
+                evasion_started = False
+                evasion_ended = False
+                for i in range(len(n_preys_behind_pred_bout)):
+                    n_preys_behind = n_preys_behind_pred_bout[i]
+                    pred_vel_change = compute_angle(pred_vel_bout[i-1], np.array([0., 0.]), pred_vel_bout[i])
+                    dist_to_com_condition = True if pred_dist_to_com_limit is None else pred_dist_to_com_bout[i] <= pred_dist_to_com_limit*self.width/2
+                    vel_angle_change_condition = True if vel_angle_change_limit is None else pred_vel_change <= vel_angle_change_limit
+                    conditions = True if pred_dist_to_com_limit is None and vel_angle_change_limit is None else not i == 0 and dist_to_com_condition and vel_angle_change_condition
+                    if conditions:
+                        if n_preys_behind == 0:
+                            all_preys_in_front_prev = True
+
+                        if all_preys_in_front_prev and n_preys_behind > 0 and not evasion_started:
+                            self.bout_evasion_start_times[pid].append(timestamps_bout[i])
+                            self.bout_evasion_start_ids[pid].append(i)
+                            evasions_count += 1
+                            evasion_started = True
+                        elif evasion_started and n_preys_behind == self.n_agents:
+                            self.bout_evasion_end_times[pid].append(timestamps_bout[i])
+                            self.bout_evasion_end_ids[pid].append(i)
+                            evasion_ended = True
+                            break
+                if evasion_started and not evasion_ended:
+                    self.bout_evasion_end_times[pid].append(timestamps_bout[i])
+                    self.bout_evasion_end_ids[pid].append(i)
+                elif not evasion_started:
+                    self.bout_evasion_start_times[pid].append(-1)
+                    self.bout_evasion_start_ids[pid].append(-1)
+                    self.bout_evasion_end_times[pid].append(-1)
+                    self.bout_evasion_end_ids[pid].append(-1)
+
+            print(f"--> {evasions_count} evasions detected for predator {pid + 1}")
+
 
 if __name__ == "__main__":
     #find CoBeHumanExperimentsData/ -name '*.zip' -exec sh -c 'unzip -d "${1%.*}" "$1"' _ {} \;
@@ -390,7 +465,7 @@ if __name__ == "__main__":
     exp = Round(file_path, n_preds=2 if round_type_id == 3 else 1,
                 dist_tolerance=0.7, margin=10, min_bout_length=30,
                 speed_tolerance=0.15, speed_threshold=5., absolute_speed_threshold=70,
-                bout_ids_to_remove=None)
+                bout_ids_to_remove=None, evasion_pred_dist_to_com_limit=None, evasion_vel_angle_change_limit=None)
 
     exp_plotter = RoundPlotter(exp, mac=True)
     exp_plotter.plot_metrics(time_window_dur=2, smoothing_args={'kernel': gaussian, 'window_size': 100},
