@@ -538,11 +538,21 @@ class RoundPlotter:
 
             pred_labels = []
             for pid in range(self.round.n_preds):
-                for bout_evasion_start_time in self.round.bout_evasion_start_times[pid]:
+                for bout_id in range(len(self.round.bout_evasion_start_times[pid])):
+                    bout_evasion_start_time = self.round.bout_evasion_start_times[pid][bout_id]
+                    bout_evasion_end_time = self.round.bout_evasion_end_times[pid][bout_id]
                     if time_window_dur is None or (time_window_dur is not None and self.round.timestamps[t] - 2 * time_window_dur / 3 <= bout_evasion_start_time <= self.round.timestamps[t] + time_window_dur / 3):
                         if bout_evasion_start_time >= 0:
-                            args_dict['ax_bout_div'].axvline(x=bout_evasion_start_time, ymin=0.04,
-                                                             ymax=(self.round.n_preds if separate_predators else 1) * 0.84, color=self.colors[pid][:-1], linestyle="--", linewidth=1)
+                            args_dict['ax_bout_div'].axvline(x=bout_evasion_start_time,
+                                                             ymin=0.04 + pid * (separate_predators), ymax=(pid * separate_predators + 1) * 0.84,
+                                                             color=self.colors[pid][:-1], linestyle="--", linewidth=1)
+                            args_dict['ax_bout_div'].axvline(x=bout_evasion_end_time,
+                                                             ymin=0.04 + pid * (separate_predators), ymax=(pid * separate_predators + 1) * 0.84,
+                                                             color=self.colors[pid][:-1], linestyle="--", linewidth=1)
+                            args_dict['ax_bout_div'].text(x=(bout_evasion_start_time + bout_evasion_end_time)/2, y=1 + pid * (separate_predators),
+                                                          s=f"{bout_evasion_fountain_metric[pid][bout_id]:.3f}",
+                                                          ha='center', va='top', rotation='vertical')
+
                 if args_dict['in_bout'][pid]:
                     pred_labels.append("in bout")
                 else:
@@ -576,6 +586,7 @@ class RoundPlotter:
             return args_dict
 
         pred_datas_vel = self.round.compute_velocity(self.round.pred_data_arrs)
+        bout_evasion_fountain_metric = self.round.compute_bout_evasion_fountain_metric()
 
         fig = plt.figure(figsize=(15.12, 9.82), dpi=100)
         gs = GridSpec.GridSpec(2 if show_n_agents_behind else 1, 2)
@@ -644,8 +655,8 @@ class RoundPlotter:
                         ax.scatter(reference_time - (self.round.timestamps[bout_start] - last_bout_end - 3), metric[pid][bout_start:bout_end][self.round.timestamps[bout_start:bout_end] == reference_time],
                                    color=self.colors[pid][:-1], alpha=alpha)
                         ax.axvline(reference_time - (self.round.timestamps[bout_start] - last_bout_end - 3), color='k', linestyle='--')
-                        ax.text(reference_time - (self.round.timestamps[bout_start] - last_bout_end - 3), -.05, self.round.pred_bout_ids[pid][i], color=self.colors[pid][:-1], transform=ax.get_xaxis_transform(),
-                                ha='center', va='top', fontsize=7.8)
+                        ax.text(reference_time - (self.round.timestamps[bout_start] - last_bout_end - 3), -.05, self.round.pred_bout_ids[pid][i],
+                                color=self.colors[pid][:-1], transform=ax.get_xaxis_transform(), ha='center', va='top', fontsize=7.8)
                     else:
                         ax.scatter(0, metric[pid][bout_start:bout_end][self.round.timestamps[bout_start:bout_end] == reference_time],
                                    color=self.colors[pid][:-1], alpha=alpha)
