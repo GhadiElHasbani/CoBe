@@ -675,5 +675,29 @@ class RoundPlotter:
         plt.tight_layout()
         plt.show()
 
+    def plot_bout_metric_static(self, metric: Iterable[Iterable[float]], metric_name: str = 'metric', overlay_bouts: bool = False):
+        fig = plt.figure()
+        gs = GridSpec.GridSpec(self.round.n_preds, 1)
+
+        for pid in range(self.round.n_preds):
+            ax = fig.add_subplot(gs[pid, :], sharex=ax if pid > 0 and overlay_bouts else None)
+
+            for bout_id in range(len(self.round.pred_bout_bounds_filtered[pid])):
+                if metric[pid][bout_id] >= 0:
+
+                    alpha = ((int(self.round.pred_bout_ids[pid][bout_id].split('_')[0])+1)/len(self.round.pred_bout_bounds[pid]))*0.9 + (1-0.9)
+                    ax.plot(0 + bout_id * (not overlay_bouts), metric[pid][bout_id],
+                            color=self.colors[pid][:-1], alpha=alpha)
+                    if not overlay_bouts:
+                        ax.scatter(bout_id, metric[pid][bout_id], color=self.colors[pid][:-1], alpha=alpha)
+                    else:
+                        ax.scatter(0, metric[pid][bout_id], color=self.colors[pid][:-1], alpha=alpha)
+
+            ax.set_xticks([])
+            ax.set_ylabel(metric_name)
+
+        plt.tight_layout()
+        plt.show()
+
 
 
