@@ -1,4 +1,4 @@
-from typing import List, Tuple, Callable, Iterable, Dict
+from typing import List, Tuple, Callable, Iterable, Dict, Any
 import numpy as np
 import pandas
 from numpy._typing import ArrayLike
@@ -166,8 +166,12 @@ def compute_angle(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> NDArray[float]
     return np.concatenate([np.degrees(angles), [np.degrees(angles)[-1]]]) if len(a.shape) > 1 else np.degrees(angles)
 
 
-def transpose_list_of_arrays(list_of_arrays: List[NDArray]) -> List[NDArray]:
+def transpose_list_of_arrays(list_of_arrays: List[NDArray[Any]]) -> List[NDArray[Any]]:
     return [np.vstack([arr[i] for arr in list_of_arrays]) for i in range(list_of_arrays[0].shape[0])]
+
+
+def turn_list_of_2d_arrays_into_3d_array(list_of_arrays: List[NDArray[Any]]) -> NDArray[Any]:
+    return np.rollaxis(np.dstack(list_of_arrays), -1)
 
 
 def get_perpendicular_vector(a: NDArray) -> NDArray:

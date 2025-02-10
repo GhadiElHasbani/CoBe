@@ -1,6 +1,7 @@
 import itertools
 from tinyflux import TinyFlux
 from helpers import *
+from fountain_metric import *
 from round_plotter import RoundPlotter
 from typing import Dict
 import os
@@ -198,6 +199,9 @@ class Round:
     def compute_predator_velocity(self):
         return self.compute_velocity(self.pred_data_arrs)
 
+    def compute_agent_velocity(self):
+        return self.compute_velocity(self.agent_data_arrs)
+
     def compute_agent_speed(self) -> List[NDArray[float]]:
         agents_data_speed = self.compute_speed(self.agent_data_arrs)
         return agents_data_speed
@@ -232,6 +236,11 @@ class Round:
         pred_datas_speed = self.compute_predator_speed()
         pred_datas_acc = self.compute_acceleration(pred_datas_speed, smooth, smoothing_args)
         return pred_datas_acc
+
+    def compute_predator_distance_to_agents(self) -> List[NDArray[float]]:
+        pred_dist_to_agents = [np.vstack([np.sqrt(np.sum((self.pred_data_arrs[pid] - self.agent_data_arrs[aid])**2, axis=1)) for aid in range(self.n_agents)]).T for pid in range(self.n_preds)]
+
+        return pred_dist_to_agents
 
     def compute_predator_distance_to_agent_com(self) -> List[NDArray[float]]:
         pred_dist_to_agent_com = [np.sqrt(np.sum((pred_data_arr - self.agent_com)**2, axis=1)) for pred_data_arr in self.pred_data_arrs]
@@ -474,6 +483,42 @@ class Round:
             preds_bout_evasion_straightness_metric.append(bout_evasion_straightness_metric)
 
         return preds_bout_evasion_straightness_metric
+
+    def compute_bout_evasion_fountain_metric(self, margin: int = 0, n_closest_agents: int = 10) -> List[NDArray[float]]:
+        agents_vel = self.compute_agent_velocity()
+        preds_vel = self.compute_predator_velocity()
+        preds_dist_to_agents = self.compute_predator_distance_to_agents()
+
+        preds_bout_evasion_fountain_metric = []
+        for pid in range(self.n_preds):
+            bout_evasion_fountain_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.)
+            for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
+                if self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                    bout_start, _ = self.pred_bout_bounds_filtered[pid][bout_id]
+                    evasion_start = max([0, bout_start + self.bout_evasion_start_ids[pid][bout_id]-margin])
+                    evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id]+margin, len(self.pred_data_arrs[pid])])
+
+                    pred_evasion_positions = self.pred_data_arrs[pid][evasion_start:evasion_end]
+                    agents_evasion_positions = turn_list_of_2d_arrays_into_3d_array(transpose_list_of_arrays([self.agent_data_arrs[aid][evasion_start:evasion_end] for aid in range(self.n_agents)]))
+
+                    pred_evasion_vel = preds_vel[pid][evasion_start:evasion_end]
+                    agents_evasion_vel = turn_list_of_2d_arrays_into_3d_array(transpose_list_of_arrays([agents_vel[aid][evasion_start:evasion_end] for aid in range(self.n_agents)]))
+
+                    pred_evasion_dist_to_agents = preds_dist_to_agents[pid][evasion_start:evasion_end]
+                    flee_arr = np.full_like(pred_evasion_dist_to_agents, 0)
+                    for t_id in range(flee_arr.shape[0]):
+                        n_closest_agents_ids = np.argpartition(pred_evasion_dist_to_agents[t_id], n_closest_agents)[:n_closest_agents]
+                        flee_arr[t_id, n_closest_agents_ids] = 50
+
+                    bout_evasion_fountain_metric[bout_id] = np.mean(extract_SII(pos_rep=agents_evasion_positions, vel_rep=agents_evasion_vel,
+                                                                                pred_pos_rep=pred_evasion_positions, pred_vel_rep=pred_evasion_vel,
+                                                                                flee=flee_arr))
+
+            preds_bout_evasion_fountain_metric.append(bout_evasion_fountain_metric)
+
+        return preds_bout_evasion_fountain_metric
+
+    
 
 
 if __name__ == "__main__":
