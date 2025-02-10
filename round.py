@@ -234,7 +234,7 @@ class Round:
         return pred_datas_acc
 
     def compute_predator_distance_to_agent_com(self) -> List[NDArray[float]]:
-        pred_dist_to_agent_com = [np.sqrt(np.sum((pred_data_arr - self.agent_com)**2, axis = 1)) for pred_data_arr in self.pred_data_arrs]
+        pred_dist_to_agent_com = [np.sqrt(np.sum((pred_data_arr - self.agent_com)**2, axis=1)) for pred_data_arr in self.pred_data_arrs]
 
         return pred_dist_to_agent_com
 
@@ -436,7 +436,7 @@ class Round:
                         if n_preys_behind == 0:
                             all_preys_in_front_prev = True
 
-                        if all_preys_in_front_prev and n_preys_behind > 0 and not evasion_started:
+                        if all_preys_in_front_prev and n_preys_behind > 0 and not evasion_started and i != len(n_preys_behind_pred_bout) - 1:
                             self.bout_evasion_start_times[pid].append(timestamps_bout[i])
                             self.bout_evasion_start_ids[pid].append(i)
                             evasions_count += 1
@@ -456,6 +456,24 @@ class Round:
                     self.bout_evasion_end_ids[pid].append(-1)
 
             print(f"--> {evasions_count} evasions detected for predator {pid + 1}")
+
+    def compute_bout_evasion_straightness_metric(self, margin: int = 0) -> List[NDArray[float]]:
+        preds_bout_evasion_straightness_metric = []
+        for pid in range(self.n_preds):
+            bout_evasion_straightness_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.)
+            for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
+                if self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                    bout_start, _ = self.pred_bout_bounds_filtered[pid][bout_id]
+                    evasion_start, evasion_end = self.bout_evasion_start_ids[pid][bout_id], self.bout_evasion_end_ids[pid][bout_id]
+                    evasion_positions = self.pred_data_arrs[pid][max([0, bout_start + evasion_start-margin]):min([bout_start + evasion_end+margin, len(self.pred_data_arrs[pid])])]
+
+                    distance_traveled = compute_distance_traveled(evasion_positions)
+                    displacement = euclidean_distance(evasion_positions[0], evasion_positions[-1])
+                    bout_evasion_straightness_metric[bout_id] = displacement/distance_traveled
+
+            preds_bout_evasion_straightness_metric.append(bout_evasion_straightness_metric)
+
+        return preds_bout_evasion_straightness_metric
 
 
 if __name__ == "__main__":

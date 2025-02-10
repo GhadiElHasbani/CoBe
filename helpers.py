@@ -102,6 +102,7 @@ def find_nearest(array: ArrayLike, value: float) -> int:
 
 
 def euclidean_distance(points_a: NDArray[float], points_b: NDArray[float]) -> NDArray[float]:
+
     return np.sqrt(np.sum((points_a - points_b)**2, axis=0))
 
 
@@ -174,9 +175,13 @@ def get_perpendicular_vector(a: NDArray) -> NDArray:
     b[0] = -a[1]
     b[1] = a[0]
 
-
     c = np.empty_like(a)
     c[0] = a[1]
     c[1] = -a[0]
 
     return np.array([b, c])
+
+
+def compute_distance_traveled(arr: NDArray) -> float:
+    return np.sum(np.sqrt(np.sum(np.diff(arr, axis=0)**2, axis=1)))
+
