@@ -10,6 +10,7 @@ from round_plotter import RoundPlotter
 from typing import Dict
 import os
 import file_last_modification_time_finder
+import alpha_shapes
 
 
 class Round:
@@ -660,6 +661,51 @@ class Round:
             preds_bout_evasion_circularity_metric.append(bout_evasion_circularity_metric)
 
         return preds_bout_evasion_circularity_metric
+
+    def compute_bout_evasion_convexity_metric(self, margin: int = 0, compute_at: str = "end") -> List[NDArray[float]]:
+        preds_bout_evasion_convexity_metric = []
+        for pid in range(self.n_preds):
+            bout_evasion_convexity_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.)
+            for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
+                if self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                    bout_start, _ = self.pred_bout_bounds_filtered[pid][bout_id]
+                    evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
+                    evasion_middle = int(bout_start + (self.bout_evasion_start_ids[pid][bout_id] + self.bout_evasion_end_ids[pid][bout_id]) / 2)
+
+                    if compute_at == "end":
+                        agents_evasion_positions = np.vstack([self.agent_data_arrs[aid][evasion_end] for aid in range(self.n_agents)])
+                    elif compute_at == "middle":
+                        agents_evasion_positions = np.vstack([self.agent_data_arrs[aid][evasion_middle] for aid in range(self.n_agents)])
+                    else:
+                        raise ValueError(f"Invalid compute_at value {compute_at}")
+
+                    shaper = alpha_shapes.Alpha_Shaper(agents_evasion_positions)
+                    alpha_opt, alpha_shape = shaper.optimize()
+
+                    if "Multi" in str(type(alpha_shape.boundary)):
+                        alpha_coords = []
+                        for geom in alpha_shape.boundary.geoms:
+                            alpha_x, alpha_y = geom.coords.xy
+                            if not geom.is_closed:
+                                alpha_x = np.array(list(alpha_x) + [alpha_x[0]])
+                                alpha_y = np.array(list(alpha_y) + [alpha_y[0]])
+                            alpha_coords.append(np.vstack([alpha_x, alpha_y]).T)
+                        alpha_coords = np.vstack(alpha_coords)
+                    else:
+                        alpha_x, alpha_y = alpha_shape.boundary.coords.xy
+                        if not alpha_shape.is_closed:
+                            alpha_x = np.array(list(alpha_x) + [alpha_x[0]])
+                            alpha_y = np.array(list(alpha_y) + [alpha_y[0]])
+                        alpha_coords = np.vstack([alpha_x, alpha_y]).T
+
+                    convexhull = scipy.spatial.ConvexHull(alpha_coords)
+                    convexhull_coords = alpha_coords[convexhull.vertices]
+
+                    bout_evasion_convexity_metric[bout_id] = shapely.Polygon(convexhull_coords).length / shapely.Polygon(alpha_coords).length
+
+            preds_bout_evasion_convexity_metric.append(bout_evasion_convexity_metric)
+
+        return preds_bout_evasion_convexity_metric
 
 
 
