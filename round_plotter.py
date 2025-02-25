@@ -251,7 +251,7 @@ class RoundPlotter:
 
             return args_dict
 
-        fig = plt.figure(dpi=100)
+        fig = plt.figure(figsize=(15.12, 9.82), dpi=100)
         gs = GridSpec.GridSpec(6, 2)
 
         ## Trajectory figure
@@ -381,7 +381,7 @@ class RoundPlotter:
 
             return args_dict
 
-        fig = plt.figure(dpi=100)
+        fig = plt.figure(figsize=(15.12, 9.82), dpi=100)
         gs = GridSpec.GridSpec(5, 2)
 
         dts = np.diff(self.round.timestamps)
@@ -497,7 +497,7 @@ class RoundPlotter:
         for pid in range(self.round.n_preds):
             left = self.round.timestamps[0]
             for i, (bout_start, bout_end) in enumerate(self.round.pred_bout_bounds_filtered[pid]):
-                bout_id = self.round.pred_bout_ids[pid][i]
+                bout_id = self.round.pred_bout_ids_filtered[pid][i]
 
                 if time_window_dur is not None:
                     if self.round.timestamps[bout_start] >= self.round.timestamps[t] + time_window_dur / 3:
@@ -535,7 +535,7 @@ class RoundPlotter:
     def plot_bout_division(self, show_com: bool = False, separate_predators: bool = False, fountain_metric_method: str = "convexhull",
                            keep_pred_history: bool = False, keep_com_history: bool = False, keep_agent_history: bool = False,
                            show_pred_vel_vector: bool = True, time_window_dur: float = None, show_n_agents_behind: bool = True,
-                           save: bool = False, out_file_path: str = "bout_divisions.mp4") -> None:
+                           save: bool = False, out_file_path: str = "bout_divisions.mp4", show: bool = True) -> None:
         def update(t: int, args_dict: Dict) -> Dict:
             t_start = max([0, find_nearest(self.round.timestamps, self.round.timestamps[t] - 2*time_window_dur / 3)])
 
@@ -783,14 +783,14 @@ class RoundPlotter:
                         mean_metric_relative_time = self.round.timestamps[bout_start:bout_end] - reference_time if mean_metric_relative_time[0] < (self.round.timestamps[bout_start:bout_end] - reference_time)[0] else mean_metric_relative_time
                         mean_metric += metric[pid][bout_start:bout_end][reference_ids[pid][i] - min_reference_id:reference_ids[pid][i]+1]
 
-                    alpha = ((int(self.round.pred_bout_ids[pid][i].split('_')[0])+1)/len(self.round.pred_bout_bounds[pid]))*0.9 + (1-0.9)
+                    alpha = ((int(self.round.pred_bout_ids_filtered[pid][i].split('_')[0])+1)/len(self.round.pred_bout_bounds[pid]))*0.9 + (1-0.9)
                     ax.plot(self.round.timestamps[bout_start:bout_end] - reference_time * overlay_bouts - (self.round.timestamps[bout_start] - last_bout_end - 3) * (not overlay_bouts), metric[pid][bout_start:bout_end],
                             color=self.colors[pid][:-1], alpha=alpha)
                     if not overlay_bouts:
                         ax.scatter(reference_time - (self.round.timestamps[bout_start] - last_bout_end - 3), metric[pid][bout_start:bout_end][self.round.timestamps[bout_start:bout_end] == reference_time],
                                    color=self.colors[pid][:-1], alpha=alpha)
                         ax.axvline(reference_time - (self.round.timestamps[bout_start] - last_bout_end - 3), color='k', linestyle='--')
-                        ax.text(reference_time - (self.round.timestamps[bout_start] - last_bout_end - 3), -.05, self.round.pred_bout_ids[pid][i],
+                        ax.text(reference_time - (self.round.timestamps[bout_start] - last_bout_end - 3), -.05, self.round.pred_bout_ids_filtered[pid][i],
                                 color=self.colors[pid][:-1], transform=ax.get_xaxis_transform(), ha='center', va='top', fontsize=7.8)
                     else:
                         ax.scatter(0, metric[pid][bout_start:bout_end][self.round.timestamps[bout_start:bout_end] == reference_time],
@@ -820,7 +820,7 @@ class RoundPlotter:
             for bout_id in range(len(self.round.pred_bout_bounds_filtered[pid])):
                 if metric[pid][bout_id] >= 0:
 
-                    alpha = ((int(self.round.pred_bout_ids[pid][bout_id].split('_')[0])+1)/len(self.round.pred_bout_bounds[pid]))*0.9 + (1-0.9)
+                    alpha = ((int(self.round.pred_bout_ids_filtered[pid][bout_id].split('_')[0])+1)/len(self.round.pred_bout_bounds[pid]))*0.9 + (1-0.9)
                     ax.plot(0 + bout_id * (not overlay_bouts), metric[pid][bout_id],
                             color=self.colors[pid][:-1], alpha=alpha)
                     if not overlay_bouts:

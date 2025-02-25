@@ -43,6 +43,7 @@ class Round:
         self.T = T
         self.n_agents = n_agents
         self.n_preds = n_preds
+        self.suffix = file_path.split('/')[-2][1]
 
         width = ((2 ** 0.5) * radius + radius * 2) / 2
 
@@ -145,10 +146,11 @@ class Round:
         self.agent_data_arrs_bouts = None
         self.timestamps_bouts = None
         self.agent_com_bouts = None
-        self.pred_bout_ids = None
+        self.pred_bout_ids_filtered = None
 
         self.pred_bout_bounds_filtered = None
         self.pred_bout_bounds_discarded = []
+        self.pred_bout_ids_discarded = []
         self.pred_data_arrs_bouts_discarded = None
         self.agent_data_arrs_bouts_discarded = None
         self.timestamps_bouts_discarded = None
@@ -172,11 +174,18 @@ class Round:
         json_file_folder = "/".join(self.file_path.split('/')[:-1] + [f'database_input{round_identifier}/'])
         if not os.path.exists(json_file_folder):
             json_file_folder = "/".join(self.file_path.split('/')[:-1] + [f'database_input{round_identifier.lower()}/'])
-            if not os.path.exists(json_file_folder):
-                round_identifier = self.file_path.split('/')[-1].split('.')[0].split('_')[-1]
-                json_file_folder = "/".join(self.file_path.split('/')[:-1] + [f'database_input{round_identifier}/'])
+
+        if not os.path.exists(json_file_folder):
+            round_identifier = self.file_path.split('/')[-1].split('.')[0].split('_')[-1]
+            json_file_folder = "/".join(self.file_path.split('/')[:-1] + [f'database_input{round_identifier}/'])
+
         if not os.path.exists(json_file_folder):
             json_file_folder = "/".join(self.file_path.split('/')[:-1] + [f'database_input{self.file_path.split('/')[-2]}/'])
+
+        if not os.path.exists(json_file_folder):
+            round_identifier = self.file_path.split('/')[-1].split('.')[0]
+            json_file_folder = "/".join(self.file_path.split('/')[:-1] + [f'database_input{''.join(round_identifier.split('_')[-2:]).lower()}/'])
+
         json_files = file_last_modification_time_finder.get_json_files(json_file_folder)
         print(f"Found {len(json_files)} json files in the folder.")
 
@@ -184,8 +193,7 @@ class Round:
         json_files = file_last_modification_time_finder.sort_files_by_filename(json_files)
 
         json_files = [os.path.join(json_file_folder, file) for file in json_files]
-        print(
-            f"Files last modified between {file_last_modification_time_finder.file_last_modification_time_minutes_seconds(json_files[0])} and {file_last_modification_time_finder.file_last_modification_time_minutes_seconds(json_files[-1])}.")
+        print(f"Files last modified between {file_last_modification_time_finder.file_last_modification_time_minutes_seconds(json_files[0])} and {file_last_modification_time_finder.file_last_modification_time_minutes_seconds(json_files[-1])}.")
 
         # getting the number of files that were in a given second
         _, num_files_between = file_last_modification_time_finder.find_consecutive_files_with_increasing_seconds(json_files)
@@ -337,7 +345,8 @@ class Round:
         temp = [get_bounds(pred_points_during_bouts, margin=margin) for pred_points_during_bouts in pred_points_during_bouts]
         self.pred_bout_bounds = [temp_el[0] for temp_el in temp]
         self.pred_bout_lengths = [temp_el[1] for temp_el in temp]
-        self.pred_bout_ids = [np.arange(len(self.pred_bout_bounds[pid])).astype(str) + np.full(len(self.pred_bout_bounds[pid]), '_' + str(pid)) for pid in range(self.n_preds)]
+        self.pred_bout_ids = [np.arange(len(self.pred_bout_bounds[pid])).astype(str) + np.full(len(self.pred_bout_bounds[pid]), '_' + (self.suffix if self.n_preds == 1 else str(pid + 1) + "_SH")) for pid in range(self.n_preds)]
+        self.pred_bout_ids_filtered = self.pred_bout_ids
         self.pred_bout_bounds_filtered = self.pred_bout_bounds
 
         print(f"--> found {np.sum([len(self.pred_bout_bounds[pid]) for pid in range(self.n_preds)])}")
@@ -357,13 +366,14 @@ class Round:
         self.organize_bout_info()
 
     def filter_bouts(self, filters: Iterable[Iterable[bool]]):
-        self.pred_bout_bounds_discarded.append(
-            [np.array(self.pred_bout_bounds_filtered[pid])[np.logical_not(filters[pid])] for pid in
-             range(self.n_preds)])
-        self.pred_bout_bounds_filtered = [
-            np.array(self.pred_bout_bounds_filtered[pid])[filters[pid]] for pid in
-            range(self.n_preds)]
-        self.pred_bout_ids = [self.pred_bout_ids[pid][filters[pid]] for pid in range(self.n_preds)]
+        self.pred_bout_bounds_discarded.append([np.array(self.pred_bout_bounds_filtered[pid])[np.logical_not(filters[pid])] for pid in range(self.n_preds)])
+        self.pred_bout_ids_discarded.append([self.pred_bout_ids_filtered[pid][np.logical_not(filters[pid])].tolist() for pid in range(self.n_preds)])
+
+        self.pred_bout_bounds_filtered = [np.array(self.pred_bout_bounds_filtered[pid])[filters[pid]] for pid in range(self.n_preds)]
+        self.pred_bout_ids_filtered = [self.pred_bout_ids_filtered[pid][filters[pid]] for pid in range(self.n_preds)]
+
+        print(f"--> Discarded bouts: {self.pred_bout_ids_discarded[-1]}")
+
 
     def apply_bout_length_filter(self, min_bout_length: int):
         print(f"Discarding bouts with less than {min_bout_length} observations")
@@ -377,8 +387,8 @@ class Round:
 
     def apply_bout_low_speed_filter(self, speed_threshold: float, speed_tolerance: float):
         print(f"Discarding bouts with speed less than {speed_threshold} for more than {speed_tolerance*100}% of observations")
-        pred_datas_vel = self.compute_predator_speed()
-        pred_bouts_vel = [[pred_datas_vel[pid][self.pred_bout_bounds_filtered[pid][i][0]:self.pred_bout_bounds_filtered[pid][i][1]] for i in range(len(self.pred_bout_bounds_filtered[pid]))] for pid in range(self.n_preds)]
+        preds_data_vel = self.compute_predator_speed()
+        pred_bouts_vel = [[preds_data_vel[pid][self.pred_bout_bounds_filtered[pid][i][0]:self.pred_bout_bounds_filtered[pid][i][1]] for i in range(len(self.pred_bout_bounds_filtered[pid]))] for pid in range(self.n_preds)]
         pred_bout_speed_filters = [np.array([not np.sum(np.array(pred_bouts_vel[pid][i]) < speed_threshold)/len(pred_bouts_vel[pid][i]) > speed_tolerance for i in range(len(pred_bouts_vel[pid]))]) for pid in range(self.n_preds)]
 
         self.filter_bouts(filters=pred_bout_speed_filters)
@@ -388,13 +398,13 @@ class Round:
     def apply_bout_high_speed_filter(self, absolute_speed_threshold: float):
         print(f"Discarding bouts with speed greater than {absolute_speed_threshold}")
 
-        pred_datas_vel = self.compute_predator_speed()
+        preds_data_vel = self.compute_predator_speed()
         pred_dists_to_com = self.compute_predator_distance_to_agent_com()
         pred_dists_to_border = self.compute_predator_distance_to_border()
         pred_bout_abs_speed_filters = [[] for _ in range(self.n_preds)]
         for pid in range(self.n_preds):
             for pred_bout_bound in self.pred_bout_bounds_filtered[pid]:
-                pred_bouts_vel = [pred_datas_vel[pid][pred_bout_bound[0]:pred_bout_bound[1]] for pid in
+                pred_bouts_vel = [preds_data_vel[pid][pred_bout_bound[0]:pred_bout_bound[1]] for pid in
                                   range(self.n_preds)]
 
                 pred_bout_abs_speed_filter = True
@@ -416,7 +426,7 @@ class Round:
         print(f"--> {np.sum([len(self.pred_bout_bounds_filtered[pid]) for pid in range(self.n_preds)])} remain")
 
     def remove_bout_by_id(self, ids: List[str]):
-        pred_bout_ids_filters = [np.logical_not(np.isin(self.pred_bout_ids[pid], ids)) for pid in range(self.n_preds)]
+        pred_bout_ids_filters = [np.logical_not(np.isin(self.pred_bout_ids_filtered[pid], ids)) for pid in range(self.n_preds)]
 
         self.filter_bouts(filters=pred_bout_ids_filters)
 
@@ -710,6 +720,57 @@ class Round:
             preds_bout_evasion_convexity_metric.append(bout_evasion_convexity_metric)
 
         return preds_bout_evasion_convexity_metric
+
+    def write_bout_info(self, output_path, exp_plotter_args: Dict[str, Any],
+                        mark_speed_spike: bool = False, speed_spike_threshold: float = 10.) -> None:
+        exp_plotter = RoundPlotter(self, **exp_plotter_args)
+        com_speed = self.compute_agent_com_speed()
+        preds_speed = self.compute_predator_speed()
+        preds_acc = self.compute_predator_acceleration(smooth=False)
+        preds_attack_angle = self.compute_predator_attack_angle(smooth=False)
+        preds_n_preys_behind = self.compute_n_preys_behind_predator()
+
+        for pid_in_bout in range(self.n_preds):
+            for bout_id in range(len(self.pred_bout_bounds_filtered[pid_in_bout])):
+                print(f"Writing bout {self.pred_bout_ids_filtered[pid_in_bout][bout_id]}...")
+                
+                bout_start, bout_end = self.pred_bout_bounds_filtered[pid_in_bout][bout_id]
+
+                bout_output_path = f"{output_path}/{self.pred_bout_ids_filtered[pid_in_bout][bout_id]}"
+                if not os.path.exists(bout_output_path):
+                    os.makedirs(bout_output_path)
+
+                # CSV file
+                output_csv = f"{bout_output_path}/{self.pred_bout_ids_filtered[pid_in_bout][bout_id]}.csv"
+
+                if os.path.isfile(output_csv):  # Empty the file if it already exists
+                    f = open(output_csv, "w+")
+                    f.close()
+
+                with open(output_csv, 'a') as output_file:
+                    header = ",".join(["timestep", "timestamp", "coms"])
+                    for aid in range(self.n_agents):
+                        header = ",".join([header, f"x{aid}", f"y{aid}"])
+                    for pid in range(self.n_preds):
+                        header = ",".join([header, f"prx{pid}", f"pry{pid}",
+                                                   f"prs{pid}", f"pra{pid}", f"praa{pid}", f"prnpb{pid}"])
+                    output_file.write(f"{header}\n")
+
+                    for idx in range(bout_start, bout_end):
+                        line = ",".join([str(self.timesteps[idx]), str(self.timestamps[idx]), str(com_speed[idx])])
+                        for aid in range(self.n_agents):
+                            line = ",".join([line, str(self.agents_data[aid][idx][0]), str(self.agents_data[aid][idx][1])])
+                        for pid in range(self.n_preds):
+                            line = ",".join([line, str(self.preds_data[pid][idx][0]), str(self.preds_data[pid][idx][1]),
+                                                   str(preds_speed[pid][idx]), str(preds_acc[pid][idx]),
+                                                   str(preds_attack_angle[pid][idx]), str(preds_n_preys_behind[pid][idx])])
+                        output_file.write(f"{line}\n")
+
+                # Video
+                # change to single bout
+                exp_plotter.plot_single_bout(bout_id=self.pred_bout_ids_filtered[pid_in_bout][bout_id], show_com=True, save=True, show=False,
+                                             mark_speed_spike=mark_speed_spike, speed_spike_threshold=speed_spike_threshold,
+                                             out_file_path=f"{bout_output_path}/bout_divisions_{self.pred_bout_ids_filtered[pid_in_bout][bout_id]}.mp4")
 
 
 
