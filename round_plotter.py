@@ -43,12 +43,18 @@ class RoundPlotter:
                 art3d.pathpatch_2d_to_3d(rect, z=z, zdir=i)
                 art3d.pathpatch_2d_to_3d(circle, z=z, zdir=i)
 
-    def plot_agent_trajectories(self, agent_data: Union[List[Tuple[float, float]], NDArray[float]], ax: plt.Axes, t: int, cmap: str = 'viridis'):
-        ax.scatter([x[0] for x in agent_data][:t], [x[1] for x in agent_data][:t], self.round.timestamps[:t],
-                   c=range(t), cmap=cmap, s=0.1)
+    def plot_agent_trajectories(self, agent_data: Union[List[Tuple[float, float]], NDArray[float]], ax: plt.Axes, t: int,
+                                cmap: str = 'viridis', force_2d: bool = False) -> None:
+        if force_2d:
+            ax.scatter([x[0] for x in agent_data][:t], [x[1] for x in agent_data][:t],
+                       c=range(t), cmap=cmap, s=0.1)
+        else:
+            ax.scatter([x[0] for x in agent_data][:t], [x[1] for x in agent_data][:t], self.round.timestamps[:t],
+                       c=range(t), cmap=cmap, s=0.1)
 
-    def update_agent_trajectories(self, agents_data: List[List[Tuple[float, float]]], ax: plt.Axes, t: int, z: float, force_2d:bool=False,
-                                  com_only: bool = False, agent_com: NDArray[float] = None, max_n_agents: int = None) -> None:
+    def update_agent_trajectories(self, agents_data: List[List[Tuple[float, float]]], ax: plt.Axes, t: int, z: float,
+                                  force_2d:bool=False, keep_agent_history: bool = False, keep_com_history: bool = True,
+                                  show_com: bool = False, agent_com: NDArray[float] = None, max_n_agents: int = None) -> None:
         def plot_agent_markers(agent_data: Union[List[Tuple[float, float]], NDArray[float]], ax: plt.Axes, t: int, z: float, marker: str='o', s:int=25,
                                c: str = None, force_2d:bool=False):
             x = agent_data[t][0]
@@ -59,79 +65,93 @@ class RoundPlotter:
             else:
                 ax.scatter(x, y, z, s=s, marker=marker, c=c)
 
-        if com_only:
-            plot_agent_markers(agent_com, ax=ax, t=t, z=z, marker='x', s=100, c='black', force_2d=force_2d)
-            if not force_2d:
-                self.plot_agent_trajectories(agent_com, ax=ax, t=t, cmap='Greys')
-
         for aid in range(min([max_n_agents if max_n_agents is not None else self.round.n_agents, self.round.n_agents])):
             agent_data = agents_data[aid]
             plot_agent_markers(agent_data, ax=ax, t=t, z=z, force_2d=force_2d)
 
-            if not com_only and not force_2d:
-                self.plot_agent_trajectories(agent_data, ax=ax, t=t)
+            if keep_agent_history:
+                self.plot_agent_trajectories(agent_data, ax=ax, t=t, force_2d=force_2d)
 
-    def update_predator_trajectories(self, pred_datas: List[List[Tuple[float, float]]],
+        if show_com:
+            plot_agent_markers(agent_com, ax=ax, t=t, z=z, marker='x', s=100, c='black', force_2d=force_2d)
+            if keep_com_history:
+                self.plot_agent_trajectories(agent_com, ax=ax, t=t, cmap='Greys', force_2d=force_2d)
+
+
+    def update_predator_trajectories(self, preds_data: List[List[Tuple[float, float]]],
                                      ax: plt.Axes, t: int, z: float, labels: List[str] = None,
-                                     show_pred_vel_vector: bool = False, pred_datas_vel: List[NDArray[float]] = None,
-                                     keep_history: bool = True) -> None:
+                                     show_pred_vel_vector: bool = False, preds_data_vel: List[NDArray[float]] = None,
+                                     keep_history: bool = True, force_2d: bool = False) -> None:
         for pid in range(self.round.n_preds):
-            pred_data = pred_datas[pid]
+            pred_data = preds_data[pid]
 
             # showing predator trajectory with some colormap
             if keep_history:
-                ax.scatter([x[0] for x in pred_data][:t], [x[1] for x in pred_data][:t], self.round.timestamps[:t],
-                           c=range(t),
-                           cmap=self.colors[pid],
-                           s=0.5)
+                if force_2d:
+                    ax.scatter([x[0] for x in pred_data][:t], [x[1] for x in pred_data][:t],
+                               c=range(t),
+                               cmap=self.colors[pid],
+                               s=0.5)
+                else:
+                    ax.scatter([x[0] for x in pred_data][:t], [x[1] for x in pred_data][:t], self.round.timestamps[:t],
+                               c=range(t),
+                               cmap=self.colors[pid],
+                               s=0.5)
 
             x = pred_data[t][0]
             y = pred_data[t][1]
 
-            if keep_history:
-                ax.scatter(x, y, z, s=100, marker='x', color=self.colors[pid][:-1], label=labels[pid] if labels is not None else None)
-
-                if show_pred_vel_vector:
-                    vel_vector_norm = np.linalg.norm(pred_datas_vel[pid][t])/4
-                    ax.quiver(X=pred_data[t][0], Y=pred_data[t][1], Z=z, U=pred_datas_vel[pid][t][0]/vel_vector_norm, V=pred_datas_vel[pid][t][1]/vel_vector_norm, W=0.,
-                              color=self.colors[pid][:-1], linestyle='--')
-
-                    perpendicular_vector = get_perpendicular_vector(np.array([pred_datas_vel[pid][t][0], pred_datas_vel[pid][t][1]])/vel_vector_norm)*10 + pred_data[t]
-                    ax.plot((perpendicular_vector[0][0], pred_data[t][0], perpendicular_vector[1][0]),
-                            (perpendicular_vector[0][1], pred_data[t][1], perpendicular_vector[1][1]), (z, z, z), color='k', linestyle='--')
-            else:
+            if force_2d:
                 ax.scatter(x, y, s=100, marker='x', color=self.colors[pid][:-1], label=labels[pid] if labels is not None else None)
 
                 if show_pred_vel_vector:
-                    vel_vector_norm = np.linalg.norm(pred_datas_vel[pid][t]) / 4
-                    ax.quiver(pred_data[t][0], pred_data[t][1], pred_datas_vel[pid][t][0] / vel_vector_norm, pred_datas_vel[pid][t][1] / vel_vector_norm,
+                    vel_vector_norm = np.linalg.norm(preds_data_vel[pid][t])
+                    ax.quiver(pred_data[t][0], pred_data[t][1], preds_data_vel[pid][t][0] / vel_vector_norm,
+                              preds_data_vel[pid][t][1] / vel_vector_norm,
                               color=self.colors[pid][:-1], linestyle='--')
 
-                    perpendicular_vector = get_perpendicular_vector(np.array([pred_datas_vel[pid][t][0], pred_datas_vel[pid][t][1]]) / vel_vector_norm) * 10 + pred_data[t]
+                    perpendicular_vector = get_perpendicular_vector(np.array([preds_data_vel[pid][t][0], preds_data_vel[pid][t][1]]) / vel_vector_norm) * 10 + pred_data[t]
                     ax.plot((perpendicular_vector[0][0], pred_data[t][0], perpendicular_vector[1][0]),
-                            (perpendicular_vector[0][1], pred_data[t][1], perpendicular_vector[1][1]), color='k', linestyle='--')
+                            (perpendicular_vector[0][1], pred_data[t][1], perpendicular_vector[1][1]), color='k',
+                            linestyle='--')
+            else:
+                ax.scatter(x, y, z, s=100, marker='x', color=self.colors[pid][:-1], label=labels[pid] if labels is not None else None)
+
+                if show_pred_vel_vector:
+                    vel_vector_norm = np.linalg.norm(preds_data_vel[pid][t]) / 4
+                    ax.quiver(X=pred_data[t][0], Y=pred_data[t][1], Z=z, U=preds_data_vel[pid][t][0] / vel_vector_norm,
+                              V=preds_data_vel[pid][t][1] / vel_vector_norm, W=0.,
+                              color=self.colors[pid][:-1], linestyle='--')
+
+                    perpendicular_vector = get_perpendicular_vector(np.array([preds_data_vel[pid][t][0], preds_data_vel[pid][t][1]]) / vel_vector_norm) * 10 + pred_data[t]
+                    ax.plot((perpendicular_vector[0][0], pred_data[t][0], perpendicular_vector[1][0]),
+                            (perpendicular_vector[0][1], pred_data[t][1], perpendicular_vector[1][1]), (z, z, z),
+                            color='k', linestyle='--')
 
         if labels is not None:
             ax.legend()
 
-    def update_trajectories(self, agents_data: List[List[Tuple[float, float]]], pred_datas: List[List[Tuple[float, float]]],
+    def update_trajectories(self, agents_data: List[List[Tuple[float, float]]], preds_data: List[List[Tuple[float, float]]],
                             ax: plt.Axes, t: int, z: float, pred_labels: List[str] = None, keep_pred_history: bool = True,
-                            show_arena_borders: bool = True, com_only: bool = False, agent_com=NDArray[float],
-                            pred_datas_vel: List[NDArray[float]] = None, show_pred_vel_vector: bool = False) -> None:
+                            show_arena_borders: bool = True, show_com: bool = False, agent_com=NDArray[float],
+                            preds_data_vel: List[NDArray[float]] = None, show_pred_vel_vector: bool = False,
+                            force_2d: bool = False, keep_com_history: bool = True, keep_agent_history: bool = False) -> None:
+        if not keep_pred_history:
+            force_2d = True
 
         if show_arena_borders:
             # Arena borders
-            self.update_arena_borders(ax=ax, z=z, force_2d=not keep_pred_history)
+            self.update_arena_borders(ax=ax, z=z, force_2d=force_2d)
 
         # predator data
-        self.update_predator_trajectories(pred_datas=pred_datas, ax=ax, t=t, z=z, labels=pred_labels, keep_history=keep_pred_history,
-                                          show_pred_vel_vector=show_pred_vel_vector, pred_datas_vel=pred_datas_vel)
+        self.update_predator_trajectories(preds_data=preds_data, ax=ax, t=t, z=z, labels=pred_labels, keep_history=keep_pred_history,
+                                          show_pred_vel_vector=show_pred_vel_vector, preds_data_vel=preds_data_vel, force_2d=force_2d)
 
         # agent data
-        self.update_agent_trajectories(agents_data=agents_data, ax=ax, t=t, z=z, com_only=com_only, agent_com=agent_com, force_2d=not keep_pred_history)
+        self.update_agent_trajectories(agents_data=agents_data, ax=ax, t=t, z=z, show_com=show_com, agent_com=agent_com,
+                                       force_2d=force_2d, keep_com_history=keep_com_history, keep_agent_history=keep_agent_history)
 
-
-        self.update_trajectories_ax_specs(ax, t=t, force_2d=not keep_pred_history)
+        self.update_trajectories_ax_specs(ax, t=t, force_2d=force_2d)
 
     def update_metric_ax_specs(self, data_list: List[NDArray[float]], ax: plt.Axes,
                                t: int, t_start: int, time_window_dur: float,
@@ -163,7 +183,7 @@ class RoundPlotter:
 
     def plot_metrics(self, time_window_dur: float = 2000., smoothing_args: Dict = None,
                      max_abs_speed: float = None, max_abs_acceleration: float = None,
-                     com_only: bool = False, show_pred_vel_vector: bool = False,
+                     show_com: bool = False, show_pred_vel_vector: bool = False,
                      save: bool = False, out_file_path: str = "metrics.mp4") -> None:
         def update(t: int, args_dict: Dict) -> Dict:
             t_start = max([0, find_nearest(self.round.timestamps, self.round.timestamps[t] - 2*time_window_dur / 3)])
@@ -177,9 +197,9 @@ class RoundPlotter:
             args_dict['ax_att'].cla()
             args_dict['ax_npb'].cla()
 
-            self.update_trajectories(agents_data=self.round.agents_data, pred_datas=self.round.pred_datas,
-                                     pred_datas_vel=pred_datas_vel, show_pred_vel_vector=show_pred_vel_vector,
-                                     ax=args_dict['ax'], t=t, z=z, com_only=com_only, agent_com=self.round.agent_com)
+            self.update_trajectories(agents_data=self.round.agents_data, preds_data=self.round.preds_data,
+                                     preds_data_vel=preds_data_vel, show_pred_vel_vector=show_pred_vel_vector,
+                                     ax=args_dict['ax'], t=t, z=z, show_com=show_com, agent_com=self.round.agent_com)
 
             # Speed axes
             self.update_predator_lines(preds_data_spe, ax=args_dict['ax_spe'], lines=[args_dict[f'vel_{pid}'] for pid in range(self.round.n_preds)],
@@ -298,7 +318,7 @@ class RoundPlotter:
         if save:
             plt.close()
 
-    def plot_predator_acc_smoothings(self, time_window_dur: float = 2000., window_size: int = 40, com_only: bool = True,
+    def plot_predator_acc_smoothings(self, time_window_dur: float = 2000., window_size: int = 40, show_com: bool = True,
                                      save: bool = False, out_file_path: str = "acc_smoothings.mp4") -> None:
         def update(t: int, args_dict: Dict) -> Dict:
             t_start = max([0, find_nearest(self.round.timestamps, self.round.timestamps[t] - 2 * time_window_dur / 3)])
@@ -311,8 +331,8 @@ class RoundPlotter:
             args_dict['ax_acc_bw'].cla()
             args_dict['ax_dts'].cla()
 
-            self.update_trajectories(agents_data=self.round.agents_data, pred_datas=self.round.pred_datas,
-                                     ax=args_dict['ax'], t=t, z=z, com_only=com_only, agent_com=self.round.agent_com)
+            self.update_trajectories(agents_data=self.round.agents_data, preds_data=self.round.preds_data,
+                                     ax=args_dict['ax'], t=t, z=z, show_com=show_com, agent_com=self.round.agent_com)
 
             # Raw predator acceleration
             self.update_predator_lines(preds_data_acc, ax=args_dict['ax_acc'],
@@ -428,7 +448,7 @@ class RoundPlotter:
         plt.tight_layout()
         plt.show()
 
-    def plot_bout_trajectories(self, com_only: bool = True, discarded: bool = False, filter_number: int = 0,
+    def plot_bout_trajectories(self, show_com: bool = True, discarded: bool = False, filter_number: int = 0,
                                save: bool = False, out_file_path: str = "bout_trajectories.mp4"):
         def update(t: int, args_dict: Dict) -> Dict:
             z = self.round.timestamps[t]
@@ -438,7 +458,7 @@ class RoundPlotter:
             self.update_trajectories(agents_data=agents_data,
                                      preds_data=preds_data,
                                      ax=args_dict['ax'], t=t, z=z,
-                                     com_only=com_only, agent_com=agent_com)
+                                     show_com=show_com, agent_com=agent_com)
 
             return args_dict
 
@@ -512,7 +532,8 @@ class RoundPlotter:
         if ax is None:
             plt.show()
 
-    def plot_bout_division(self, com_only: bool = False, separate_predators: bool = False, keep_pred_history: bool = False,
+    def plot_bout_division(self, show_com: bool = False, separate_predators: bool = False, fountain_metric_method: str = "convexhull",
+                           keep_pred_history: bool = False, keep_com_history: bool = False, keep_agent_history: bool = False,
                            show_pred_vel_vector: bool = True, time_window_dur: float = None, show_n_agents_behind: bool = True,
                            save: bool = False, out_file_path: str = "bout_divisions.mp4") -> None:
         def update(t: int, args_dict: Dict) -> Dict:
@@ -532,9 +553,10 @@ class RoundPlotter:
                 else:
                     args_dict['in_bout'][pid] = t in pred_bout_starts[pid]
 
-            self.update_trajectories(agents_data=self.round.agents_data, pred_datas=self.round.pred_datas, pred_labels=[".", "."],
-                                     ax=args_dict['ax'], t=t, z=self.round.timestamps[t], com_only=com_only, agent_com=self.round.agent_com,
-                                     show_pred_vel_vector=show_pred_vel_vector, pred_datas_vel=pred_datas_vel, keep_pred_history=keep_pred_history)
+            self.update_trajectories(agents_data=self.round.agents_data, preds_data=self.round.preds_data, pred_labels=[".", "."],
+                                     ax=args_dict['ax'], t=t, z=self.round.timestamps[t], show_com=show_com, agent_com=self.round.agent_com,
+                                     show_pred_vel_vector=show_pred_vel_vector, preds_data_vel=preds_data_vel,
+                                     keep_pred_history=keep_pred_history, keep_com_history=keep_com_history, keep_agent_history=keep_agent_history)
 
             pred_labels = []
             for pid in range(self.round.n_preds):
@@ -619,7 +641,12 @@ class RoundPlotter:
             # saving to m4 using ffmpeg writer
             ani.save(out_file_path, fps=self.fps)
 
-        plt.show()
+        if show:
+            plt.show()
+
+        if save:
+            plt.close()
+
 
         if save:
             plt.close()

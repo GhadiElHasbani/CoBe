@@ -99,7 +99,7 @@ class Round:
             self.agent_data_arrs.append(agent_data_arr)
 
         # retrieving data for predator agent(s)
-        self.pred_datas = []
+        self.preds_data = []
         self.pred_data_arrs = []
 
         for pred_id in range(self.n_preds):
@@ -111,7 +111,7 @@ class Round:
             # slicing to length
             pred_data = pred_data[self.T_start:self.T]
             pred_data_arr = convert_list_of_tuples_to_array(pred_data)
-            self.pred_datas.append(pred_data)
+            self.preds_data.append(pred_data)
             self.pred_data_arrs.append(pred_data_arr)
 
         # sorting and slicing timesteps and timestamps
@@ -124,7 +124,7 @@ class Round:
             dup_filter = np.hstack([np.array([True]), self.timestamps[1:] != self.timestamps[:-1]])
             self.timesteps = self.timesteps[dup_filter]
             self.timestamps = self.timestamps[dup_filter]
-            self.pred_datas = [np.array(pred_data)[dup_filter] for pred_data in self.pred_datas]
+            self.preds_data = [np.array(pred_data)[dup_filter] for pred_data in self.preds_data]
             self.pred_data_arrs = [np.array(pred_data_arr)[dup_filter] for pred_data_arr in self.pred_data_arrs]
             self.agents_data = [np.array(agent_data)[dup_filter] for agent_data in self.agents_data]
             self.agent_data_arrs = [np.array(agent_data_arr)[dup_filter] for agent_data_arr in self.agent_data_arrs]
