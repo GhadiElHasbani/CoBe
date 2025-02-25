@@ -1,4 +1,8 @@
 import itertools
+
+import numpy as np
+import scipy.spatial
+import shapely
 from tinyflux import TinyFlux
 from helpers import *
 from fountain_metric import *
@@ -554,7 +558,7 @@ class Round:
 
         return preds_bout_evasion_straightness_metric
 
-    def compute_bout_evasion_fountain_metric(self, margin: int = 0, n_closest_agents: int = 10) -> List[NDArray[float]]:
+    def compute_bout_evasion_fountain_metric(self, margin: int = 0, method: str = "distance", n_closest_agents: int = 10) -> List[NDArray[float]]:
         agents_vel = self.compute_agent_velocity()
         preds_vel = self.compute_predator_velocity()
         preds_dist_to_agents = self.compute_predator_distance_to_agents()
@@ -571,24 +575,92 @@ class Round:
                     pred_evasion_positions = self.pred_data_arrs[pid][evasion_start:evasion_end]
                     agents_evasion_positions = turn_list_of_2d_arrays_into_3d_array(transpose_list_of_arrays([self.agent_data_arrs[aid][evasion_start:evasion_end] for aid in range(self.n_agents)]))
 
-                    pred_evasion_vel = preds_vel[pid][evasion_start:evasion_end]
-                    agents_evasion_vel = turn_list_of_2d_arrays_into_3d_array(transpose_list_of_arrays([agents_vel[aid][evasion_start:evasion_end] for aid in range(self.n_agents)]))
+                    if method == "distance":
+                        pred_evasion_vel = preds_vel[pid][evasion_start:evasion_end]
+                        agents_evasion_vel = turn_list_of_2d_arrays_into_3d_array(transpose_list_of_arrays([agents_vel[aid][evasion_start:evasion_end] for aid in range(self.n_agents)]))
 
-                    pred_evasion_dist_to_agents = preds_dist_to_agents[pid][evasion_start:evasion_end]
-                    flee_arr = np.full_like(pred_evasion_dist_to_agents, 0)
-                    for t_id in range(flee_arr.shape[0]):
-                        n_closest_agents_ids = np.argpartition(pred_evasion_dist_to_agents[t_id], n_closest_agents)[:n_closest_agents]
-                        flee_arr[t_id, n_closest_agents_ids] = 50
+                        pred_evasion_dist_to_agents = preds_dist_to_agents[pid][evasion_start:evasion_end]
+                        flee_arr = np.full_like(pred_evasion_dist_to_agents, 0)
+                        for tid in range(flee_arr.shape[0]):
+                            n_closest_agents_ids = np.argpartition(pred_evasion_dist_to_agents[tid], n_closest_agents)[:n_closest_agents]
+                            flee_arr[tid, n_closest_agents_ids] = 50
 
-                    bout_evasion_fountain_metric[bout_id] = np.mean(extract_SII(pos_rep=agents_evasion_positions, vel_rep=agents_evasion_vel,
-                                                                                pred_pos_rep=pred_evasion_positions, pred_vel_rep=pred_evasion_vel,
-                                                                                flee=flee_arr))
-
+                        bout_evasion_fountain_metric[bout_id] = np.mean(extract_SII(pos_rep=agents_evasion_positions, vel_rep=agents_evasion_vel,
+                                                                                    pred_pos_rep=pred_evasion_positions, pred_vel_rep=pred_evasion_vel,
+                                                                                    flee=flee_arr))
             preds_bout_evasion_fountain_metric.append(bout_evasion_fountain_metric)
 
         return preds_bout_evasion_fountain_metric
 
-    
+    def compute_bout_evasion_circularity_metric(self, margin: int = 0, convex_hull_area_change_threshold: float = 1., n_obs_before_and_after: int = 4) -> List[NDArray[float]]:
+        preds_dist_to_agent_com = self.compute_predator_distance_to_agent_com()
+
+        preds_bout_evasion_circularity_metric = []
+        self.preds_convex_hulls = []
+        self.preds_convex_hull_points = []
+        self.preds_bounding_circles = []
+        for pid in range(self.n_preds):
+            bout_evasion_circularity_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.)
+            convex_hulls = []
+            convex_hull_points = []
+            bounding_circles = []
+            for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
+                if self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                    bout_start, _ = self.pred_bout_bounds_filtered[pid][bout_id]
+                    evasion_start = max([0, bout_start + self.bout_evasion_start_ids[pid][bout_id] - margin])
+                    evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
+
+                    agents_evasion_positions = turn_list_of_2d_arrays_into_3d_array(transpose_list_of_arrays([self.agent_data_arrs[aid][evasion_start:evasion_end] for aid in range(self.n_agents)]))
+
+                    pred_dist_to_agent_com = preds_dist_to_agent_com[pid][evasion_start:evasion_end]
+                    min_pred_dist_to_com_idx = np.argmin(pred_dist_to_agent_com)
+                    if n_obs_before_and_after > 0:
+                        agent_pos_at_min_pred_dist_to_com_margin = agents_evasion_positions[max([0, min_pred_dist_to_com_idx - n_obs_before_and_after]):min_pred_dist_to_com_idx + 1]
+                        # agent_pos_at_min_pred_dist_to_com_margin = agents_evasion_positions[:n_obs_before_and_after+1]
+
+                        for i in [0, -1]:
+                            convexhull = scipy.spatial.ConvexHull(agent_pos_at_min_pred_dist_to_com_margin[i])
+                            convexhull_points = agent_pos_at_min_pred_dist_to_com_margin[i][convexhull.vertices]
+                            convexhull_polygon = shapely.geometry.Polygon(convexhull_points)
+                            if i == 0:
+                                previous_convex_hull_area = convexhull_polygon.area
+                            elif i == -1:
+                                current_convex_hull_area = convexhull_polygon.area
+                        # convex_hull_area_ratio = np.abs(previous_convex_hull_area - current_convex_hull_area / previous_convex_hull_area)
+                        convex_hull_area_ratio = min([previous_convex_hull_area, current_convex_hull_area]) / max([previous_convex_hull_area, current_convex_hull_area])
+                        previous_convex_hull_area = convexhull_polygon.area
+                    else:
+                        convex_hull_area_ratio = convex_hull_area_change_threshold
+
+                    agent_pos_at_min_pred_dist_to_com = agents_evasion_positions[min_pred_dist_to_com_idx]
+
+                    convexhull = scipy.spatial.ConvexHull(agent_pos_at_min_pred_dist_to_com)
+                    convexhull_points = agent_pos_at_min_pred_dist_to_com[convexhull.vertices]
+                    convexhull_polygon = shapely.geometry.Polygon(convexhull_points)
+
+                    min_bounding_circle = shapely.minimum_bounding_circle(convexhull_polygon)
+                    if convex_hull_area_ratio <= convex_hull_area_change_threshold:
+                        bout_evasion_circularity_metric[bout_id] = convexhull_polygon.area / min_bounding_circle.area
+                    else:
+                        bout_evasion_circularity_metric[bout_id] = 0
+
+                    bounding_circles.append(min_bounding_circle.exterior.coords)
+                    convex_hulls.append(convexhull)
+                    convex_hull_points.append(agent_pos_at_min_pred_dist_to_com)
+
+                    # print(bout_id, convex_hull_area_ratio, bout_evasion_fountain_metric[bout_id])
+                else:
+                    bounding_circles.append(None)
+                    convex_hulls.append(None)
+                    convex_hull_points.append(None)
+
+            self.preds_bounding_circles.append(bounding_circles)
+            self.preds_convex_hull_points.append(convex_hull_points)
+            self.preds_convex_hulls.append(convex_hulls)
+            preds_bout_evasion_circularity_metric.append(bout_evasion_circularity_metric)
+
+        return preds_bout_evasion_circularity_metric
+
 
 
 if __name__ == "__main__":
