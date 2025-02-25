@@ -482,7 +482,6 @@ class Round:
                 pred_vel_bout = pred_vel_arrs[pid][bout_start:bout_end]
                 pred_prey_sides_bout = pred_prey_sides[pid][bout_start:bout_end]
                 preys_behind_pred_bout = preys_behind_pred[pid][bout_start:bout_end]
-                #saved_evasion = False
                 all_preys_in_front_prev = False
                 prey_behind_on_both_sides_during_evasion = False
                 evasion_started = False
@@ -607,7 +606,7 @@ class Round:
 
         return preds_bout_evasion_fountain_metric
 
-    def compute_bout_evasion_circularity_metric(self, margin: int = 0, convex_hull_area_change_threshold: float = 1., n_obs_before_and_after: int = 4) -> List[NDArray[float]]:
+    def compute_bout_evasion_circularity(self, margin: int = 0, convex_hull_area_change_threshold: float = 1., n_obs_before_and_after: int = 4) -> List[NDArray[float]]:
         preds_dist_to_agent_com = self.compute_predator_distance_to_agent_com()
 
         preds_bout_evasion_circularity_metric = []
@@ -676,7 +675,7 @@ class Round:
 
         return preds_bout_evasion_circularity_metric
 
-    def compute_bout_evasion_convexity_metric(self, margin: int = 0, compute_at: str = "end") -> List[NDArray[float]]:
+    def compute_bout_evasion_convexity(self, margin: int = 0, compute_at: str = "end") -> List[NDArray[float]]:
         preds_bout_evasion_convexity_metric = []
         for pid in range(self.n_preds):
             bout_evasion_convexity_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.)
@@ -691,7 +690,7 @@ class Round:
                     elif compute_at == "middle":
                         agents_evasion_positions = np.vstack([self.agent_data_arrs[aid][evasion_middle] for aid in range(self.n_agents)])
                     else:
-                        raise ValueError(f"Invalid compute_at value {compute_at}")
+                        raise ValueError(f"Invalid compute_at value: {compute_at}")
 
                     shaper = alpha_shapes.Alpha_Shaper(agents_evasion_positions)
                     alpha_opt, alpha_shape = shaper.optimize()
@@ -720,6 +719,31 @@ class Round:
             preds_bout_evasion_convexity_metric.append(bout_evasion_convexity_metric)
 
         return preds_bout_evasion_convexity_metric
+
+    def compute_bout_evasion_polarisation(self, margin: int = 0, compute_at: str = "end") -> List[NDArray[float]]:
+        agents_polarisation = self.compute_agent_polarisation()
+
+        preds_bout_evasion_polarisation_metric = []
+        for pid in range(self.n_preds):
+            bout_evasion_polarisation_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.)
+            for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
+                if self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                    bout_start, _ = self.pred_bout_bounds_filtered[pid][bout_id]
+                    evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
+                    evasion_middle = int(bout_start + (self.bout_evasion_start_ids[pid][bout_id] + self.bout_evasion_end_ids[pid][bout_id]) / 2)
+
+                    if compute_at == "end":
+                        polarisation = agents_polarisation[evasion_end]
+                    elif compute_at == "middle":
+                        polarisation = agents_polarisation[evasion_middle]
+                    else:
+                        raise ValueError(f"Invalid compute_at value: {compute_at}")
+
+                    bout_evasion_polarisation_metric[bout_id] = polarisation
+
+            preds_bout_evasion_polarisation_metric.append(bout_evasion_polarisation_metric)
+
+        return preds_bout_evasion_polarisation_metric
 
     def write_bout_info(self, output_path, exp_plotter_args: Dict[str, Any],
                         mark_speed_spike: bool = False, speed_spike_threshold: float = 10.) -> None:
@@ -773,7 +797,6 @@ class Round:
                                              out_file_path=f"{bout_output_path}/bout_divisions_{self.pred_bout_ids_filtered[pid_in_bout][bout_id]}.mp4")
 
 
-
 if __name__ == "__main__":
     #find CoBeHumanExperimentsData/ -name '*.zip' -exec sh -c 'unzip -d "${1%.*}" "$1"' _ {} \;
 
@@ -788,7 +811,7 @@ if __name__ == "__main__":
 
     exp = Round(file_path, n_preds=2 if round_type_id == 3 else 1,
                 dist_tolerance=0.7, margin=10, min_bout_length=30,
-                speed_tolerance=0.15, speed_threshold=5., absolute_speed_threshold=70,
+                speed_tolerance=0.15, speed_threshold=0.475, absolute_speed_threshold=6.65, #0.15, 5., 70.
                 bout_ids_to_remove=None, evasion_pred_dist_to_com_limit=None, evasion_vel_angle_change_limit=None)
 
     exp_plotter = RoundPlotter(exp, mac=True)

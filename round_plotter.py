@@ -670,12 +670,18 @@ class RoundPlotter:
                                                   color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
                 args_dict['ax_bout_info'].axvline(x=bout_evasion_end_time, ymin=0, ymax=np.max(pred_speed),
                                                   color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
-                args_dict['ax_bout_info'].text(x=(timestamps[0] + timestamps[-1])/2, y=np.max(pred_speed)*1.05,
-                                               s=f"Circularity metric: {bout_evasion_circularity_metric:.3f}")
-                args_dict['ax_bout_info'].text(x=(timestamps[0] + timestamps[-1])/2, y=np.max(pred_speed),
-                                               s=f"M Convexity metric: {bout_evasion_convexity_metric_m:.3f}")
-                args_dict['ax_bout_info'].text(x=(timestamps[0] + timestamps[-1])/2, y=np.max(pred_speed)*0.95,
-                                               s=f"E Convexity metric: {bout_evasion_convexity_metric_e:.3f}")
+                fontsize = "small"
+
+                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=np.max(pred_speed)*1.05,
+                                               s=f"Circularity metric: {bout_evasion_circularity:.3f}", fontsize=fontsize)
+                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=np.max(pred_speed),
+                                               s=f"M Convexity metric: {bout_evasion_convexity_m:.3f}", fontsize=fontsize)
+                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=np.max(pred_speed)*0.95,
+                                               s=f"E Convexity metric: {bout_evasion_convexity_e:.3f}", fontsize=fontsize)
+                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=np.max(pred_speed)*0.9,
+                                               s=f"M Polarisation metric: {bout_evasion_polarisation_m:.3f}", fontsize=fontsize)
+                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=np.max(pred_speed)*0.85,
+                                               s=f"E Polarisation metric: {bout_evasion_polarisation_e:.3f}", fontsize=fontsize)
 
                 self.update_trajectories(agents_data=[agents_data[aid][bout_evasion_start_id:bout_evasion_end_id] for aid in range(self.round.n_agents)],
                                          preds_data=[preds_data[pid][bout_evasion_start_id:bout_evasion_end_id] for pid in range(self.round.n_preds)],
@@ -728,9 +734,11 @@ class RoundPlotter:
         bout_evasion_end_time = self.round.bout_evasion_end_times[pid_in_bout][bout_idx]
         bout_evasion_start_id = self.round.bout_evasion_start_ids[pid_in_bout][bout_idx]
         bout_evasion_end_id = self.round.bout_evasion_end_ids[pid_in_bout][bout_idx]
-        bout_evasion_circularity_metric = self.round.compute_bout_evasion_circularity_metric()[pid_in_bout][bout_idx]
-        bout_evasion_convexity_metric_m = self.round.compute_bout_evasion_convexity_metric(compute_at="middle")[pid_in_bout][bout_idx]
-        bout_evasion_convexity_metric_e = self.round.compute_bout_evasion_convexity_metric(compute_at="end")[pid_in_bout][bout_idx]
+        bout_evasion_circularity = self.round.compute_bout_evasion_circularity()[pid_in_bout][bout_idx]
+        bout_evasion_convexity_m = self.round.compute_bout_evasion_convexity(compute_at="middle")[pid_in_bout][bout_idx]
+        bout_evasion_convexity_e = self.round.compute_bout_evasion_convexity(compute_at="end")[pid_in_bout][bout_idx]
+        bout_evasion_polarisation_m = self.round.compute_bout_evasion_polarisation(compute_at="middle")[pid_in_bout][bout_idx]
+        bout_evasion_polarisation_e = self.round.compute_bout_evasion_polarisation(compute_at="end")[pid_in_bout][bout_idx]
 
         fig = plt.figure(figsize=(15.12, 9.82), dpi=100)
         fig.suptitle(f"Experiment ID: {self.round.file_path.split('/')[-3]}, Bout ID: {bout_id}")
