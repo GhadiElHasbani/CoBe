@@ -277,8 +277,8 @@ class Round:
             for tid in range(len(self.timestamps)):
                 for aid in range(len(self.agents_data)):
                     pred_vel_vec = pred_vel_arrs[pid][tid]
-                    agent_pos_vec = np.array(self.agents_data[aid][tid]) - self.pred_datas[pid][tid]
-                    preys_behind[pid][tid, aid] = 1 if agent_pos_vec.reshape((1, -1)) @ pred_vel_vec.reshape((-1, 1)) < 0 else 0
+                    agent_pos_vec = np.array(self.agents_data[aid][tid]) - self.preds_data[pid][tid]
+                    preys_behind[pid][tid, aid] = 1 if agent_pos_vec @ pred_vel_vec < 0 else 0
 
         return preys_behind
 
@@ -286,6 +286,24 @@ class Round:
         preys_behind = self.compute_preys_behind_predator()
 
         return [np.sum(preys_behind[pid], axis=-1) for pid in range(self.n_preds)]
+
+    def check_which_side_of_predator_preys_on(self):
+        pred_vel_arrs = self.compute_predator_velocity()
+
+        preys_sides = [np.zeros((len(self.timestamps), len(self.agents_data))) for _ in range(self.n_preds)]
+        for pid in range(self.n_preds):
+            for tid in range(len(self.timestamps)):
+                for aid in range(len(self.agents_data)):
+                    pred_vel_vec = get_perpendicular_vector(pred_vel_arrs[pid][tid])[0]
+                    agent_pos_vec = np.array(self.agents_data[aid][tid]) - self.preds_data[pid][tid]
+                    preys_sides[pid][tid, aid] = 1 if agent_pos_vec @ pred_vel_vec < 0 else -1
+
+        return preys_sides
+
+    def check_if_preys_on_both_sides_of_predator(self) -> List[NDArray[bool]]:
+        prey_sides = self.check_which_side_of_predator_preys_on()
+
+        return [np.logical_and(np.sum(prey_sides[pid], axis=-1) != -self.n_agents, np.sum(prey_sides[pid], axis=-1) != self.n_agents) for pid in range(self.n_preds)]
 
     def segment_into_bouts(self,
                            dist_tolerance: float = 0.9,
@@ -414,11 +432,16 @@ class Round:
 
     def compute_bout_evasion_bounds(self,
                                     vel_angle_change_limit: float = 90.,
-                                    pred_dist_to_com_limit: float = 0.4):
-        print("Computing bout evasion start times")
+                                    pred_dist_to_com_limit: float = 0.4,
+                                    jitter_reset_mechanism: bool = True,
+                                    check_prey_on_both_sides: bool = True,
+                                    margin: int = 0):
+        print("Computing bout evasion bounds")
         n_preys_behind_pred = self.compute_n_preys_behind_predator()
+        preys_behind_pred = self.compute_preys_behind_predator()
         pred_vel_arrs = self.compute_predator_velocity()
         pred_dist_to_com_arrs = self.compute_predator_distance_to_agent_com()
+        pred_prey_sides = self.check_which_side_of_predator_preys_on()
 
         self.bout_evasion_start_times = [[] for _ in range(self.n_preds)]
         self.bout_evasion_start_ids = [[] for _ in range(self.n_preds)]
@@ -432,33 +455,74 @@ class Round:
                 timestamps_bout = self.timestamps[bout_start:bout_end]
                 pred_dist_to_com_bout = pred_dist_to_com_arrs[pid][bout_start:bout_end]
                 pred_vel_bout = pred_vel_arrs[pid][bout_start:bout_end]
+                pred_prey_sides_bout = pred_prey_sides[pid][bout_start:bout_end]
+                preys_behind_pred_bout = preys_behind_pred[pid][bout_start:bout_end]
+                #saved_evasion = False
                 all_preys_in_front_prev = False
+                prey_behind_on_both_sides_during_evasion = False
                 evasion_started = False
                 evasion_ended = False
-                for i in range(len(n_preys_behind_pred_bout)):
-                    n_preys_behind = n_preys_behind_pred_bout[i]
-                    pred_vel_change = compute_angle(pred_vel_bout[i-1], np.array([0., 0.]), pred_vel_bout[i])
-                    dist_to_com_condition = True if pred_dist_to_com_limit is None else pred_dist_to_com_bout[i] <= pred_dist_to_com_limit*self.width/2
+                for tid in range(len(timestamps_bout)):
+                    n_preys_behind = n_preys_behind_pred_bout[tid]
+
+                    dist_to_com_condition = True if pred_dist_to_com_limit is None else pred_dist_to_com_bout[tid] <= pred_dist_to_com_limit*self.width/2
+
+                    pred_vel_change = compute_angle(pred_vel_bout[tid-1], np.array([0., 0.]), pred_vel_bout[tid])
                     vel_angle_change_condition = True if vel_angle_change_limit is None else pred_vel_change <= vel_angle_change_limit
-                    conditions = True if pred_dist_to_com_limit is None and vel_angle_change_limit is None else not i == 0 and dist_to_com_condition and vel_angle_change_condition
+
+                    conditions = not tid == 0 and dist_to_com_condition and vel_angle_change_condition
+
+                    prey_behind_sides = pred_prey_sides_bout[tid][preys_behind_pred_bout[tid] == 1] if check_prey_on_both_sides else True
+                    prey_behind_from_both_sides = np.any(prey_behind_sides == 1) and np.any(prey_behind_sides == -1)
+
                     if conditions:
                         if n_preys_behind == 0:
                             all_preys_in_front_prev = True
 
-                        if all_preys_in_front_prev and n_preys_behind > 0 and not evasion_started and i != len(n_preys_behind_pred_bout) - 1:
-                            self.bout_evasion_start_times[pid].append(timestamps_bout[i])
-                            self.bout_evasion_start_ids[pid].append(i)
-                            evasions_count += 1
-                            evasion_started = True
-                        elif evasion_started and n_preys_behind == self.n_agents:
-                            self.bout_evasion_end_times[pid].append(timestamps_bout[i])
-                            self.bout_evasion_end_ids[pid].append(i)
-                            evasion_ended = True
-                            break
+                        if not evasion_started:
+                            if all_preys_in_front_prev and self.n_agents > n_preys_behind > 0 and tid != len(n_preys_behind_pred_bout) - 1:
+                                start_idx = max([0, tid - margin])
+                                self.bout_evasion_start_times[pid].append(timestamps_bout[start_idx])
+                                self.bout_evasion_start_ids[pid].append(start_idx)
+                                evasions_count += 1
+                                evasion_started = True
+                                all_preys_in_front_prev = False
+                        else:
+                            if jitter_reset_mechanism and not evasion_ended and n_preys_behind == 0:
+                                self.bout_evasion_start_times[pid].pop()
+                                self.bout_evasion_start_ids[pid].pop()
+                                evasions_count -= 1
+                                evasion_started = False
+                                prey_behind_on_both_sides_during_evasion = False
+                            elif prey_behind_from_both_sides:
+                                prey_behind_on_both_sides_during_evasion = True
+
+                            elif n_preys_behind == self.n_agents:
+                                if prey_behind_on_both_sides_during_evasion:
+                                    end_idx = min([len(timestamps_bout) - 1, tid + margin])
+                                    self.bout_evasion_end_times[pid].append(timestamps_bout[end_idx])
+                                    self.bout_evasion_end_ids[pid].append(end_idx)
+                                    evasion_ended = True
+
+                                break
+
                 if evasion_started and not evasion_ended:
-                    self.bout_evasion_end_times[pid].append(timestamps_bout[i])
-                    self.bout_evasion_end_ids[pid].append(i)
-                elif not evasion_started:
+                    if self.bout_evasion_start_ids[pid][-1] == len(timestamps_bout) - 1:
+                        print("evasion started at end of bout")
+                        self.bout_evasion_start_times[pid].pop()
+                        self.bout_evasion_start_ids[pid].pop()
+                        evasions_count -= 1
+                        evasion_started = False
+                    elif not prey_behind_on_both_sides_during_evasion:
+                        self.bout_evasion_start_times[pid].pop()
+                        self.bout_evasion_start_ids[pid].pop()
+                        evasions_count -= 1
+                        evasion_started = False
+                    else:
+                        end_idx = len(timestamps_bout) - 1
+                        self.bout_evasion_end_times[pid].append(timestamps_bout[end_idx])
+                        self.bout_evasion_end_ids[pid].append(end_idx)
+                if not evasion_started:
                     self.bout_evasion_start_times[pid].append(-1)
                     self.bout_evasion_start_ids[pid].append(-1)
                     self.bout_evasion_end_times[pid].append(-1)
