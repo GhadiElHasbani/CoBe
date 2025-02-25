@@ -22,8 +22,8 @@ class RoundPlotter:
     def update_trajectories_ax_specs(self, ax: plt.Axes, t: int, force_2d: bool = False) -> None:
         if force_2d:
             ax.axis('equal')
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("y [m]")
         ax.set_title(f"Trajectory of {self.round.n_agents} P-Points and {self.round.n_preds} Predator(s)")
         ax.set_xlim(-self.round.width*2/3 + self.round.center[0], self.round.width*2/3 + self.round.center[0])
         ax.set_ylim(-self.round.width*2/3 + self.round.center[1], self.round.width*2/3 + self.round.center[1])
@@ -182,50 +182,50 @@ class RoundPlotter:
                                      ax=args_dict['ax'], t=t, z=z, com_only=com_only, agent_com=self.round.agent_com)
 
             # Speed axes
-            self.update_predator_lines(pred_datas_spe, ax=args_dict['ax_spe'], lines=[args_dict[f'vel_{pid}'] for pid in range(self.round.n_preds)],
+            self.update_predator_lines(preds_data_spe, ax=args_dict['ax_spe'], lines=[args_dict[f'vel_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start)
-            self.update_metric_ax_specs(pred_datas_spe, ax=args_dict['ax_spe'],
+            self.update_metric_ax_specs(preds_data_spe, ax=args_dict['ax_spe'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
-                                        metric="speed", max_abs_val=max_abs_speed)
+                                        metric="speed [m/s]", max_abs_val=max_abs_speed)
             # Acceleration axes
-            self.update_predator_lines(pred_datas_acc_smoothed, ax=args_dict['ax_acc'],
+            self.update_predator_lines(preds_data_acc_smoothed, ax=args_dict['ax_acc'],
                                        lines=[args_dict[f'acc_smoothed_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start)
-            self.update_predator_lines(pred_datas_acc, ax=args_dict['ax_acc'],
+            self.update_predator_lines(preds_data_acc, ax=args_dict['ax_acc'],
                                        lines=[args_dict[f'acc_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start, linestyle='--', alpha=0.6)
-            self.update_metric_ax_specs(vcombine_lists_of_arrays([pred_datas_acc, pred_datas_acc_smoothed]), ax=args_dict['ax_acc'],
+            self.update_metric_ax_specs(vcombine_lists_of_arrays([preds_data_acc, preds_data_acc_smoothed]), ax=args_dict['ax_acc'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
-                                        metric="acceleration", max_abs_val=max_abs_acceleration)
+                                        metric="acceleration [m/s$^2$]", max_abs_val=max_abs_acceleration)
             # Predator distance to agents center of mass axes
-            self.update_predator_lines(pred_datas_com, ax=args_dict['ax_com'],
+            self.update_predator_lines(preds_data_com, ax=args_dict['ax_com'],
                                        lines=[args_dict[f'com_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start)
-            self.update_metric_ax_specs(pred_datas_com, ax=args_dict['ax_com'],
+            self.update_metric_ax_specs(preds_data_com, ax=args_dict['ax_com'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
-                                        metric="distance from agents center of mass")
+                                        metric="distance from agents center of mass [m]")
             # Predator distance to border axes
-            self.update_predator_lines(pred_datas_bor, ax=args_dict['ax_bor'],
+            self.update_predator_lines(preds_data_bor, ax=args_dict['ax_bor'],
                                        lines=[args_dict[f'bor_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start)
-            self.update_metric_ax_specs(pred_datas_bor, ax=args_dict['ax_bor'],
+            self.update_metric_ax_specs(preds_data_bor, ax=args_dict['ax_bor'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
-                                        metric="distance from closest border")
+                                        metric="distance from closest border [m]")
             # Predator attack angle
-            self.update_predator_lines(pred_datas_att_smoothed, ax=args_dict['ax_att'],
+            self.update_predator_lines(preds_data_att_smoothed, ax=args_dict['ax_att'],
                                        lines=[args_dict[f'att_smoothed_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start)
-            self.update_predator_lines(pred_datas_att, ax=args_dict['ax_att'],
+            self.update_predator_lines(preds_data_att, ax=args_dict['ax_att'],
                                        lines=[args_dict[f'att_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start, linestyle='--', alpha=0.6)
-            self.update_metric_ax_specs(pred_datas_att, ax=args_dict['ax_att'],
+            self.update_metric_ax_specs(preds_data_att, ax=args_dict['ax_att'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
-                                        metric="attack angle", keep_y_axis_stable=True)
+                                        metric="attack angle [degrees]", keep_y_axis_stable=True)
             # Number of prey agents behind predator
-            self.update_predator_lines(pred_datas_npb, ax=args_dict['ax_npb'],
+            self.update_predator_lines(preds_data_npb, ax=args_dict['ax_npb'],
                                        lines=[args_dict[f'npb_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start)
-            self.update_metric_ax_specs(pred_datas_npb, ax=args_dict['ax_npb'],
+            self.update_metric_ax_specs(preds_data_npb, ax=args_dict['ax_npb'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
                                         metric="#agents behind predator")
 
@@ -243,15 +243,15 @@ class RoundPlotter:
                               'kernel': lambda z: 1,
                               'window_size': 40}
         # Compute metrics
-        pred_datas_vel = self.round.compute_velocity(self.round.pred_data_arrs)
-        pred_datas_spe = self.round.compute_predator_speed()
-        pred_datas_acc_smoothed = self.round.compute_predator_acceleration(smoothing_args=smoothing_args)
-        pred_datas_acc = self.round.compute_predator_acceleration(smooth=False)
-        pred_datas_com = self.round.compute_predator_distance_to_agent_com()
-        pred_datas_bor = self.round.compute_predator_distance_to_border()
-        pred_datas_att_smoothed = self.round.compute_predator_attack_angle(smooth=True, smoothing_args=smoothing_args)
-        pred_datas_att = self.round.compute_predator_attack_angle()
-        pred_datas_npb = self.round.compute_n_preys_behind_predator()
+        preds_data_vel = self.round.compute_velocity(self.round.pred_data_arrs)
+        preds_data_spe = self.round.compute_predator_speed()
+        preds_data_acc_smoothed = self.round.compute_predator_acceleration(smoothing_args=smoothing_args)
+        preds_data_acc = self.round.compute_predator_acceleration(smooth=False)
+        preds_data_com = self.round.compute_predator_distance_to_agent_com()
+        preds_data_bor = self.round.compute_predator_distance_to_border()
+        preds_data_att_smoothed = self.round.compute_predator_attack_angle(smooth=True, smoothing_args=smoothing_args)
+        preds_data_att = self.round.compute_predator_attack_angle()
+        preds_data_npb = self.round.compute_n_preys_behind_predator()
 
         # speed
         ax_spe = fig.add_subplot(gs[0, 1])
@@ -315,42 +315,42 @@ class RoundPlotter:
                                      ax=args_dict['ax'], t=t, z=z, com_only=com_only, agent_com=self.round.agent_com)
 
             # Raw predator acceleration
-            self.update_predator_lines(pred_datas_acc, ax=args_dict['ax_acc'],
+            self.update_predator_lines(preds_data_acc, ax=args_dict['ax_acc'],
                                        lines=[args_dict[f'acc_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start)
-            self.update_metric_ax_specs(pred_datas_acc, ax=args_dict['ax_acc'],
+            self.update_metric_ax_specs(preds_data_acc, ax=args_dict['ax_acc'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
-                                        metric=f"acceleration (raw)")
+                                        metric=f"acceleration (raw) [m/s$^2$]")
             # Predator acceleration with average smoothing kernel
-            self.update_predator_lines(pred_datas_acc_w, ax=args_dict['ax_acc_w'],
+            self.update_predator_lines(preds_data_acc_w, ax=args_dict['ax_acc_w'],
                                            lines=[args_dict[f'acc_w_{pid}'] for pid in range(self.round.n_preds)],
                                            t=t, t_start=t_start)
-            self.update_predator_lines(pred_datas_acc, ax=args_dict['ax_acc_w'],
+            self.update_predator_lines(preds_data_acc, ax=args_dict['ax_acc_w'],
                                        lines=[args_dict[f'acc_w_raw_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start, linestyle='--', alpha=0.6)
-            self.update_metric_ax_specs(vcombine_lists_of_arrays([pred_datas_acc, pred_datas_acc_w]), ax=args_dict['ax_acc_w'],
+            self.update_metric_ax_specs(vcombine_lists_of_arrays([preds_data_acc, preds_data_acc_w]), ax=args_dict['ax_acc_w'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
-                                        metric=f"acceleration (average)")
+                                        metric=f"acceleration (average) [m/s$^2$]")
             # Predator acceleration with gaussian smoothing kernel
-            self.update_predator_lines(pred_datas_acc_w_gaus, ax=args_dict['ax_acc_w_gaus'],
+            self.update_predator_lines(preds_data_acc_w_gaus, ax=args_dict['ax_acc_w_gaus'],
                                            lines=[args_dict[f'acc_w_gaus_{pid}'] for pid in range(self.round.n_preds)],
                                            t=t, t_start=t_start)
-            self.update_predator_lines(pred_datas_acc, ax=args_dict['ax_acc_w_gaus'],
+            self.update_predator_lines(preds_data_acc, ax=args_dict['ax_acc_w_gaus'],
                                        lines=[args_dict[f'acc_w_gaus_raw_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start, linestyle='--', alpha=0.6)
-            self.update_metric_ax_specs(vcombine_lists_of_arrays([pred_datas_acc, pred_datas_acc_w_gaus]), ax=args_dict['ax_acc_w_gaus'],
+            self.update_metric_ax_specs(vcombine_lists_of_arrays([preds_data_acc, preds_data_acc_w_gaus]), ax=args_dict['ax_acc_w_gaus'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
-                                        metric=f"acceleration (gaussian)")
+                                        metric=f"acceleration (gaussian) [m/s$^2$]")
             # Predator acceleration with butterworth filter
-            self.update_predator_lines(pred_datas_acc_bw, ax=args_dict['ax_acc_bw'],
+            self.update_predator_lines(preds_data_acc_bw, ax=args_dict['ax_acc_bw'],
                                            lines=[args_dict[f'acc_bw_{pid}'] for pid in range(self.round.n_preds)],
                                            t=t, t_start=t_start)
-            self.update_predator_lines(pred_datas_acc, ax=args_dict['ax_acc_bw'],
+            self.update_predator_lines(preds_data_acc, ax=args_dict['ax_acc_bw'],
                                        lines=[args_dict[f'acc_bw_raw_{pid}'] for pid in range(self.round.n_preds)],
                                        t=t, t_start=t_start, linestyle='--', alpha=0.6)
-            self.update_metric_ax_specs(vcombine_lists_of_arrays([pred_datas_acc, pred_datas_acc_bw]), ax=args_dict['ax_acc_bw'],
+            self.update_metric_ax_specs(vcombine_lists_of_arrays([preds_data_acc, preds_data_acc_bw]), ax=args_dict['ax_acc_bw'],
                                         t=t, t_start=t_start, time_window_dur=time_window_dur,
-                                        metric=f"acceleration \n (butterworth)")
+                                        metric=f"acceleration \n (butterworth) [m/s$^2$]")
             # dts
             self.update_predator_lines([np.concatenate([np.array([0]), dts])], ax=args_dict['ax_dts'],
                                       lines=[args_dict['dts']],
@@ -371,16 +371,16 @@ class RoundPlotter:
 
         ## Metric figures
         # Compute metrics
-        pred_datas_acc = self.round.compute_predator_acceleration(smooth=False)
-        pred_datas_acc_w = self.round.compute_predator_acceleration(smooth=True,
+        preds_data_acc = self.round.compute_predator_acceleration(smooth=False)
+        preds_data_acc_w = self.round.compute_predator_acceleration(smooth=True,
                                                                     smoothing_args={'smoothing_method': 'window',
                                                                                     'kernel': lambda z: 1,
                                                                                     'window_size': window_size})
-        pred_datas_acc_w_gaus = self.round.compute_predator_acceleration(smooth=True,
+        preds_data_acc_w_gaus = self.round.compute_predator_acceleration(smooth=True,
                                                                          smoothing_args={'smoothing_method': 'window',
                                                                                          'kernel': gaussian,
                                                                                          'window_size': window_size})
-        pred_datas_acc_bw = self.round.compute_predator_acceleration(smooth=True,
+        preds_data_acc_bw = self.round.compute_predator_acceleration(smooth=True,
                                                                      smoothing_args={'smoothing_method': 'butterworth',
                                                                                      'fs': self.round.avg_fs/2,
                                                                                      'bw_fstart': 5,
@@ -436,7 +436,7 @@ class RoundPlotter:
             args_dict['ax'].cla()
 
             self.update_trajectories(agents_data=agents_data,
-                                     pred_datas=pred_datas,
+                                     preds_data=preds_data,
                                      ax=args_dict['ax'], t=t, z=z,
                                      com_only=com_only, agent_com=agent_com)
 
@@ -451,7 +451,7 @@ class RoundPlotter:
         args_dict = {'ax': ax}
         agents_data = self.round.agent_data_arrs_bouts_discarded[filter_number] if discarded else self.round.agent_data_arrs_bouts
         agent_com = self.round.agent_com_bouts_discarded[filter_number] if discarded else self.round.agent_com_bouts
-        pred_datas = self.round.pred_data_arrs_bouts_discarded[filter_number] if discarded else self.round.pred_data_arrs_bouts
+        preds_data = self.round.pred_data_arrs_bouts_discarded[filter_number] if discarded else self.round.pred_data_arrs_bouts
         timestamps = self.round.timestamps_bouts_discarded[filter_number] if discarded else self.round.timestamps_bouts
 
         ani = animation.FuncAnimation(fig=fig, func=update, frames=len(timestamps), interval=1, fargs=(args_dict,))
@@ -576,16 +576,16 @@ class RoundPlotter:
 
             if show_n_agents_behind:
                 # Number of prey agents behind predator
-                self.update_predator_lines(pred_datas_npb, ax=args_dict['ax_npb'],
+                self.update_predator_lines(preds_data_npb, ax=args_dict['ax_npb'],
                                            lines=[args_dict[f'npb_{pid}'] for pid in range(self.round.n_preds)],
                                            t=t, t_start=t_start)
-                self.update_metric_ax_specs(pred_datas_npb, ax=args_dict['ax_npb'], keep_y_axis_stable=True,
+                self.update_metric_ax_specs(preds_data_npb, ax=args_dict['ax_npb'], keep_y_axis_stable=True,
                                             t=t, t_start=t_start, time_window_dur=time_window_dur,
                                             metric="#agents behind predator")
 
             return args_dict
 
-        pred_datas_vel = self.round.compute_velocity(self.round.pred_data_arrs)
+        preds_data_vel = self.round.compute_predator_velocity()
         bout_evasion_fountain_metric = self.round.compute_bout_evasion_fountain_metric()
 
         fig = plt.figure(figsize=(15.12, 9.82), dpi=100)
@@ -602,7 +602,7 @@ class RoundPlotter:
                                             clip_on=False, alpha=0.4) for pid in range(self.round.n_preds)]}
 
         if show_n_agents_behind:
-            pred_datas_npb = self.round.compute_n_preys_behind_predator()
+            preds_data_npb = self.round.compute_n_preys_behind_predator()
             ax_npb = fig.add_subplot(gs[1, 1], sharex=ax_bout_div)
             args_dict['ax_npb'] = ax_npb
 

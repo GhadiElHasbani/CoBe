@@ -16,8 +16,9 @@ class Round:
                  T: int = None,
                  n_agents: int = 50,
                  n_preds: int = 1,
-                 center: Tuple[float, float] = (0, 0),
-                 radius: float = 20,
+                 center: Tuple[float, float] = (0., 0.),
+                 radius: float = 20.,
+                 width_in_m: float = 3.80,
                  remove_dup_timevals: bool = False,
                  infer_timestamps: bool = True,
                  write_timestamps_to_csv: bool = False,
@@ -38,9 +39,14 @@ class Round:
         self.n_agents = n_agents
         self.n_preds = n_preds
 
-        self.center = center
-        self.radius = radius
-        self.width = ((2 ** 0.5) * self.radius + self.radius * 2) / 2
+        width = ((2 ** 0.5) * radius + radius * 2) / 2
+
+        self.unit_space = width_in_m / (2 * radius)
+        self.radius = radius * self.unit_space
+        self.center = (center[0] * self.unit_space, center[1] * self.unit_space)
+        self.width = width * self.unit_space
+        print(f"Unit space: {self.unit_space}")
+
         self.arena_points = [(self.center[0] - self.width / 2, self.center[1] - self.width / 2),
                              (self.center[0] + self.width / 2, self.center[1] - self.width / 2),
                              (self.center[0] + self.width / 2, self.center[1] + self.width / 2),
@@ -83,7 +89,7 @@ class Round:
         for agent_id in range(self.n_agents):
             agent_x = self.db.get_field_values("x" + str(agent_id))
             agent_y = self.db.get_field_values("y" + str(agent_id))
-            agent_data = [(agent_x[i] + self.center[0], agent_y[i] + self.center[1]) for i in range(len(timesteps))]
+            agent_data = [(agent_x[i] * self.unit_space + self.center[0], agent_y[i] * self.unit_space + self.center[1]) for i in range(len(timesteps))]
             # sorting agent data according to timesteps list
             agent_data = [agent_data[i] for i in sorted(range(len(timesteps)), key=lambda x: timesteps[x])]
             # slicing to length
@@ -99,7 +105,7 @@ class Round:
         for pred_id in range(self.n_preds):
             pred_x = self.db.get_field_values("prx" + str(pred_id))
             pred_y = self.db.get_field_values("pry" + str(pred_id))
-            pred_data = [(pred_x[i] + self.center[0], pred_y[i] + self.center[1]) for i in range(len(timesteps))]
+            pred_data = [(pred_x[i] * self.unit_space + self.center[0], pred_y[i] * self.unit_space + self.center[1]) for i in range(len(timesteps))]
             # sorting pred data according to timesteps list
             pred_data = [pred_data[i] for i in sorted(range(len(timesteps)), key=lambda x: timesteps[x])]
             # slicing to length
