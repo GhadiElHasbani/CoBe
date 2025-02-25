@@ -200,9 +200,7 @@ class Round:
         return avg_fs
 
     def compute_speed(self, data_arrs: List[NDArray[float]]) -> List[NDArray[float]]:
-        return [
-            np.insert(np.sqrt(np.sum(np.diff(data_arr, axis=0) ** 2, axis=1)) / (np.diff(self.timestamps)), 0, [0.,]) for
-            data_arr in data_arrs]
+        return [np.insert(np.sqrt(np.sum(np.diff(data_arr, axis=0) ** 2, axis=1)) / (np.diff(self.timestamps)), 0, [0.,]) for data_arr in data_arrs]
 
     def compute_velocity(self, data_arrs: List[NDArray[float]]) -> List[NDArray[float]]:
         return [np.vstack([np.diff(data_arr, axis=0) / (np.diff(self.timestamps).reshape((-1, 1))), [0., 0.]]) for data_arr in data_arrs]
@@ -212,6 +210,12 @@ class Round:
 
     def compute_agent_velocity(self):
         return self.compute_velocity(self.agent_data_arrs)
+
+    def compute_agent_polarisation(self):
+        agents_velocity = self.compute_agent_velocity()
+        normalized_agents_velocity = [agent_velocity / np.linalg.norm(agent_velocity, axis=-1).reshape((-1, 1)) for agent_velocity in agents_velocity]
+        normalized_agents_velocity_T = transpose_list_of_arrays(normalized_agents_velocity)
+        return np.array([np.linalg.norm(np.mean(normalized_agent_velocity_T, axis=0)) for normalized_agent_velocity_T in normalized_agents_velocity_T])
 
     def compute_agent_speed(self) -> List[NDArray[float]]:
         agents_data_speed = self.compute_speed(self.agent_data_arrs)
@@ -244,9 +248,9 @@ class Round:
         return agents_data_acc
 
     def compute_predator_acceleration(self, smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
-        pred_datas_speed = self.compute_predator_speed()
-        pred_datas_acc = self.compute_acceleration(pred_datas_speed, smooth, smoothing_args)
-        return pred_datas_acc
+        preds_data_speed = self.compute_predator_speed()
+        preds_data_acc = self.compute_acceleration(preds_data_speed, smooth, smoothing_args)
+        return preds_data_acc
 
     def compute_predator_distance_to_agents(self) -> List[NDArray[float]]:
         pred_dist_to_agents = [np.vstack([np.sqrt(np.sum((self.pred_data_arrs[pid] - self.agent_data_arrs[aid])**2, axis=1)) for aid in range(self.n_agents)]).T for pid in range(self.n_preds)]
