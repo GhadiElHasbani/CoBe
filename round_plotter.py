@@ -647,6 +647,114 @@ class RoundPlotter:
         if save:
             plt.close()
 
+    def plot_single_bout(self, bout_id: str, show_com: bool = True, keep_com_history: bool = True, fountain_metric_method: str = "convexhull",
+                         keep_pred_history: bool = True, keep_agent_history: bool = True, force_2d: bool = True,
+                         show_pred_vel_vector: bool = True, mark_speed_spike: bool = False, speed_spike_threshold: float = 10.,
+                         save: bool = False, out_file_path: str = "bout.mp4", show: bool = True):
+        def update(t: int, args_dict: Dict) -> Dict:
+
+            args_dict['ax'].cla()
+            args_dict['ax_evasion_trajectory'].cla()
+            args_dict['ax_bout_info'].cla()
+
+            args_dict['ax_bout_info'].set_xlabel("Time [s]")
+            args_dict['ax_bout_info'].set_ylabel("Predator in bout speed [m/s]")
+
+            self.update_trajectories(agents_data=agents_data, preds_data=preds_data,
+                                     ax=args_dict['ax'], t=t, z=timestamps[t], show_com=show_com, agent_com=agent_com,
+                                     show_pred_vel_vector=show_pred_vel_vector, preds_data_vel=preds_data_vel, keep_pred_history=keep_pred_history,
+                                     keep_com_history=keep_com_history, keep_agent_history=keep_agent_history, force_2d=force_2d)
+
+            if bout_evasion_start_time >= 0:
+                args_dict['ax_bout_info'].axvline(x=bout_evasion_start_time, ymin=0, ymax=np.max(pred_speed),
+                                                  color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
+                args_dict['ax_bout_info'].axvline(x=bout_evasion_end_time, ymin=0, ymax=np.max(pred_speed),
+                                                  color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
+                args_dict['ax_bout_info'].text(x=(timestamps[0] + timestamps[-1])/2, y=np.max(pred_speed)*1.05,
+                                               s=f"Circularity metric: {bout_evasion_circularity_metric:.3f}")
+                args_dict['ax_bout_info'].text(x=(timestamps[0] + timestamps[-1])/2, y=np.max(pred_speed),
+                                               s=f"M Convexity metric: {bout_evasion_convexity_metric_m:.3f}")
+                args_dict['ax_bout_info'].text(x=(timestamps[0] + timestamps[-1])/2, y=np.max(pred_speed)*0.95,
+                                               s=f"E Convexity metric: {bout_evasion_convexity_metric_e:.3f}")
+
+                self.update_trajectories(agents_data=[agents_data[aid][bout_evasion_start_id:bout_evasion_end_id] for aid in range(self.round.n_agents)],
+                                         preds_data=[preds_data[pid][bout_evasion_start_id:bout_evasion_end_id] for pid in range(self.round.n_preds)],
+                                         ax=args_dict['ax_evasion_trajectory'], t=len(timestamps[bout_evasion_start_id:bout_evasion_end_id]) - 1, z=timestamps[bout_evasion_start_id:bout_evasion_end_id][-1],
+                                         show_com=show_com, agent_com=agent_com[bout_evasion_start_id:bout_evasion_end_id],
+                                         show_pred_vel_vector=False, keep_pred_history=True, show_arena_borders=True, force_2d=force_2d,
+                                         keep_com_history=keep_com_history, keep_agent_history=True
+                                         )
+                if fountain_metric_method == "convexhull":
+                    hull = self.round.preds_convex_hulls[pid_in_bout][bout_idx]
+                    hull_points = self.round.preds_convex_hull_points[pid_in_bout][bout_idx]
+                    #args_dict['ax_evasion_trajectory'].plot(hull_points[hull.vertices,0], hull_points[hull.vertices,1], 'r--', lw=2)
+                    for simplex in hull.simplices:
+                        args_dict['ax_evasion_trajectory'].plot(hull_points[simplex, 0], hull_points[simplex, 1], 'k-')
+
+                    bounding_circle_x, bounding_circle_y = self.round.preds_bounding_circles[pid_in_bout][bout_idx].xy
+                    args_dict['ax_evasion_trajectory'].plot(bounding_circle_x, bounding_circle_y)
+
+            if mark_speed_spike:
+                args_dict['ax_bout_info'].text(x=(timestamps[0] + timestamps[-1])/2, y=np.max(pred_speed)*1.05,
+                                               s=f"Speed spike present: {speed_spike_present}")
+
+            # add time bar
+            args_dict['ax_bout_info'].axvline(x=timestamps[t], ymin=-0.1, ymax=np.max(pred_speed)*0.98)
+            args_dict['ax_bout_info'].set_xlim([timestamps[0], timestamps[-1]])
+            #add speed
+            args_dict['ax_bout_info'].set_ylim([0, np.max(pred_speed)*1.1])
+            args_dict['ax_bout_info'].plot(timestamps, pred_speed, color=self.colors[pid_in_bout][:-1])
+            #args_dict['ax_bout_info'].plot(timestamps, prey_on_both_sides_of_pred[pid_in_bout], color=self.colors[pid_in_bout][:-1])
+
+            return args_dict
+
+        pid_in_bout = int(bout_id.split('_')[1]) - 1 if self.round.n_preds > 1 else 0
+        bout_idx = np.argwhere(self.round.pred_bout_ids_filtered[pid_in_bout] == bout_id)[0][0]
+        bout_start, bout_end = self.round.pred_bout_bounds[pid_in_bout][np.argwhere(self.round.pred_bout_ids[pid_in_bout] == bout_id)[0][0]]
+
+        agents_data = [self.round.agents_data[aid][bout_start:bout_end] for aid in range(self.round.n_agents)]
+        agent_com = self.round.agent_com[bout_start:bout_end]
+        preds_data = [self.round.preds_data[pid][bout_start:bout_end] for pid in range(self.round.n_preds)]
+        pred_speed = self.round.compute_predator_speed()
+        pred_speed = pred_speed[pid_in_bout][bout_start:bout_end]
+        timestamps = self.round.timestamps[bout_start:bout_end]
+
+        preds_data_vel = [self.round.compute_predator_velocity()[pid][bout_start:bout_end] for pid in range(self.round.n_preds)]
+        preds_data_speed = [self.round.compute_predator_speed()[pid][bout_start:bout_end] for pid in range(self.round.n_preds)]
+        speed_spike_present = np.any(preds_data_speed[pid_in_bout] > speed_spike_threshold)
+        #prey_on_both_sides_of_pred = [self.round.check_if_preys_on_both_sides_of_predator()[pid][bout_start:bout_end] for pid in range(self.round.n_preds)]
+
+        bout_evasion_start_time = self.round.bout_evasion_start_times[pid_in_bout][bout_idx]
+        bout_evasion_end_time = self.round.bout_evasion_end_times[pid_in_bout][bout_idx]
+        bout_evasion_start_id = self.round.bout_evasion_start_ids[pid_in_bout][bout_idx]
+        bout_evasion_end_id = self.round.bout_evasion_end_ids[pid_in_bout][bout_idx]
+        bout_evasion_circularity_metric = self.round.compute_bout_evasion_circularity_metric()[pid_in_bout][bout_idx]
+        bout_evasion_convexity_metric_m = self.round.compute_bout_evasion_convexity_metric(compute_at="middle")[pid_in_bout][bout_idx]
+        bout_evasion_convexity_metric_e = self.round.compute_bout_evasion_convexity_metric(compute_at="end")[pid_in_bout][bout_idx]
+
+        fig = plt.figure(figsize=(15.12, 9.82), dpi=100)
+        fig.suptitle(f"Experiment ID: {self.round.file_path.split('/')[-3]}, Bout ID: {bout_id}")
+        gs = GridSpec.GridSpec(2, 2)
+
+        ## Trajectory figure
+        ax = fig.add_subplot(gs[:, 0], projection='3d' if not force_2d else None)
+
+        ax_evasion_trajectory = fig.add_subplot(gs[0, 1])
+        ax_bout_info = fig.add_subplot(gs[1, 1])
+
+        args_dict = {'ax': ax, 'ax_evasion_trajectory': ax_evasion_trajectory, 'ax_bout_info': ax_bout_info}
+
+        args_dict['time_bar'] = args_dict['ax_bout_info'].axvline(timestamps[0])
+
+        ani = animation.FuncAnimation(fig=fig, func=update, frames=len(timestamps), interval=1, fargs=(args_dict,))
+
+        if save:
+            print("Saving...")
+            # saving to m4 using ffmpeg writer
+            ani.save(out_file_path, fps=self.fps)
+
+        if show:
+            plt.show()
 
         if save:
             plt.close()
