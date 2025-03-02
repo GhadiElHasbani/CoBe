@@ -7,7 +7,7 @@ from tinyflux import TinyFlux
 from helpers import *
 from fountain_metric import *
 from round_plotter import RoundPlotter
-from typing import Dict
+from typing import Dict, Union
 import os
 import file_last_modification_time_finder
 import alpha_shapes
@@ -374,7 +374,6 @@ class Round:
 
         print(f"--> Discarded bouts: {self.pred_bout_ids_discarded[-1]}")
 
-
     def apply_bout_length_filter(self, min_bout_length: int):
         print(f"Discarding bouts with less than {min_bout_length} observations")
 
@@ -606,7 +605,7 @@ class Round:
 
         return preds_bout_evasion_fountain_metric
 
-    def compute_bout_evasion_circularity(self, margin: int = 0, convex_hull_area_change_threshold: float = 1., n_obs_before_and_after: int = 4) -> List[NDArray[float]]:
+    def compute_bout_evasion_circularity(self, margin: int = 0, all_timepoints: bool = False) -> Union[List[NDArray[float]], List[List[NDArray[float]]]]:
         preds_dist_to_agent_com = self.compute_predator_distance_to_agent_com()
 
         preds_bout_evasion_circularity_metric = []
@@ -614,59 +613,53 @@ class Round:
         self.preds_convex_hull_points = []
         self.preds_bounding_circles = []
         for pid in range(self.n_preds):
-            bout_evasion_circularity_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.)
+            bout_evasion_circularity_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.) if not all_timepoints else []
             convex_hulls = []
             convex_hull_points = []
             bounding_circles = []
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
                 if self.bout_evasion_start_ids[pid][bout_id] >= 0:
-                    bout_start, _ = self.pred_bout_bounds_filtered[pid][bout_id]
+                    bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
                     evasion_start = max([0, bout_start + self.bout_evasion_start_ids[pid][bout_id] - margin])
                     evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
 
-                    agents_evasion_positions = turn_list_of_2d_arrays_into_3d_array(transpose_list_of_arrays([self.agent_data_arrs[aid][evasion_start:evasion_end] for aid in range(self.n_agents)]))
+                    agents_evasion_positions = turn_list_of_2d_arrays_into_3d_array(transpose_list_of_arrays([self.agent_data_arrs[aid][bout_start:bout_end] for aid in range(self.n_agents)]))
 
                     pred_dist_to_agent_com = preds_dist_to_agent_com[pid][evasion_start:evasion_end]
-                    min_pred_dist_to_com_idx = np.argmin(pred_dist_to_agent_com)
-                    if n_obs_before_and_after > 0:
-                        agent_pos_at_min_pred_dist_to_com_margin = agents_evasion_positions[max([0, min_pred_dist_to_com_idx - n_obs_before_and_after]):min_pred_dist_to_com_idx + 1]
-                        # agent_pos_at_min_pred_dist_to_com_margin = agents_evasion_positions[:n_obs_before_and_after+1]
 
-                        for i in [0, -1]:
-                            convexhull = scipy.spatial.ConvexHull(agent_pos_at_min_pred_dist_to_com_margin[i])
-                            convexhull_points = agent_pos_at_min_pred_dist_to_com_margin[i][convexhull.vertices]
-                            convexhull_polygon = shapely.geometry.Polygon(convexhull_points)
-                            if i == 0:
-                                previous_convex_hull_area = convexhull_polygon.area
-                            elif i == -1:
-                                current_convex_hull_area = convexhull_polygon.area
-                        # convex_hull_area_ratio = np.abs(previous_convex_hull_area - current_convex_hull_area / previous_convex_hull_area)
-                        convex_hull_area_ratio = min([previous_convex_hull_area, current_convex_hull_area]) / max([previous_convex_hull_area, current_convex_hull_area])
-                        previous_convex_hull_area = convexhull_polygon.area
-                    else:
-                        convex_hull_area_ratio = convex_hull_area_change_threshold
+                    min_pred_dist_to_com_idx = np.argmin(pred_dist_to_agent_com) + max([0, self.bout_evasion_start_ids[pid][bout_id] - margin])
+                    ids = range(agents_evasion_positions.shape[0]) if all_timepoints else [min_pred_dist_to_com_idx]
 
-                    agent_pos_at_min_pred_dist_to_com = agents_evasion_positions[min_pred_dist_to_com_idx]
+                    bout_evasion_circularity_timepoints = []
+                    for id in ids:
+                        agent_pos_at_min_pred_dist_to_com = agents_evasion_positions[id]
 
-                    convexhull = scipy.spatial.ConvexHull(agent_pos_at_min_pred_dist_to_com)
-                    convexhull_points = agent_pos_at_min_pred_dist_to_com[convexhull.vertices]
-                    convexhull_polygon = shapely.geometry.Polygon(convexhull_points)
+                        convexhull = scipy.spatial.ConvexHull(agent_pos_at_min_pred_dist_to_com)
+                        convexhull_points = agent_pos_at_min_pred_dist_to_com[convexhull.vertices]
+                        convexhull_polygon = shapely.geometry.Polygon(convexhull_points)
 
-                    min_bounding_circle = shapely.minimum_bounding_circle(convexhull_polygon)
-                    if convex_hull_area_ratio <= convex_hull_area_change_threshold:
-                        bout_evasion_circularity_metric[bout_id] = convexhull_polygon.area / min_bounding_circle.area
-                    else:
-                        bout_evasion_circularity_metric[bout_id] = 0
+                        min_bounding_circle = shapely.minimum_bounding_circle(convexhull_polygon)
+                        circularity = convexhull_polygon.area / min_bounding_circle.area
 
-                    bounding_circles.append(min_bounding_circle.exterior.coords)
-                    convex_hulls.append(convexhull)
-                    convex_hull_points.append(agent_pos_at_min_pred_dist_to_com)
+                        if not all_timepoints:
+                            bout_evasion_circularity_metric[bout_id] = circularity
+                        else:
+                            bout_evasion_circularity_timepoints.append(circularity)
+                        if id == min_pred_dist_to_com_idx:
+                            bounding_circles.append(min_bounding_circle.exterior.coords)
+                            convex_hulls.append(convexhull)
+                            convex_hull_points.append(agent_pos_at_min_pred_dist_to_com)
 
-                    # print(bout_id, convex_hull_area_ratio, bout_evasion_fountain_metric[bout_id])
+                    if all_timepoints:
+                        bout_evasion_circularity_metric.append(np.array(bout_evasion_circularity_timepoints))
+
                 else:
                     bounding_circles.append(None)
                     convex_hulls.append(None)
                     convex_hull_points.append(None)
+
+                    if all_timepoints:
+                        bout_evasion_circularity_metric.append(None)
 
             self.preds_bounding_circles.append(bounding_circles)
             self.preds_convex_hull_points.append(convex_hull_points)
@@ -675,60 +668,72 @@ class Round:
 
         return preds_bout_evasion_circularity_metric
 
-    def compute_bout_evasion_convexity(self, margin: int = 0, compute_at: str = "end") -> List[NDArray[float]]:
+    def compute_bout_evasion_convexity(self, margin: int = 0, compute_at: str = "end") -> Union[List[NDArray[float]], List[List[NDArray[float]]]]:
         preds_bout_evasion_convexity_metric = []
         for pid in range(self.n_preds):
-            bout_evasion_convexity_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.)
+            bout_evasion_convexity_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.) if compute_at != "all" else []
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
                 if self.bout_evasion_start_ids[pid][bout_id] >= 0:
-                    bout_start, _ = self.pred_bout_bounds_filtered[pid][bout_id]
+                    bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
                     evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
                     evasion_middle = int(bout_start + (self.bout_evasion_start_ids[pid][bout_id] + self.bout_evasion_end_ids[pid][bout_id]) / 2)
 
                     if compute_at == "end":
-                        agents_evasion_positions = np.vstack([self.agent_data_arrs[aid][evasion_end] for aid in range(self.n_agents)])
+                        agents_evasion_positions = [np.vstack([self.agent_data_arrs[aid][evasion_end] for aid in range(self.n_agents)])]
                     elif compute_at == "middle":
-                        agents_evasion_positions = np.vstack([self.agent_data_arrs[aid][evasion_middle] for aid in range(self.n_agents)])
+                        agents_evasion_positions = [np.vstack([self.agent_data_arrs[aid][evasion_middle] for aid in range(self.n_agents)])]
+                    elif compute_at == "all":
+                        agents_evasion_positions = transpose_list_of_arrays([self.agent_data_arrs[aid][bout_start:bout_end] for aid in range(self.n_agents)])
                     else:
                         raise ValueError(f"Invalid compute_at value: {compute_at}")
 
-                    shaper = alpha_shapes.Alpha_Shaper(agents_evasion_positions)
-                    alpha_opt, alpha_shape = shaper.optimize()
+                    bout_evasion_convexity_metric_timepoints = []
+                    for timepoint in agents_evasion_positions:
+                        shaper = alpha_shapes.Alpha_Shaper(timepoint)
+                        alpha_opt, alpha_shape = shaper.optimize()
 
-                    if "Multi" in str(type(alpha_shape.boundary)):
-                        alpha_coords = []
-                        for geom in alpha_shape.boundary.geoms:
-                            alpha_x, alpha_y = geom.coords.xy
-                            if not geom.is_closed:
+                        if "Multi" in str(type(alpha_shape.boundary)):
+                            alpha_coords = []
+                            for geom in alpha_shape.boundary.geoms:
+                                alpha_x, alpha_y = geom.coords.xy
+                                if not geom.is_closed:
+                                    alpha_x = np.array(list(alpha_x) + [alpha_x[0]])
+                                    alpha_y = np.array(list(alpha_y) + [alpha_y[0]])
+                                alpha_coords.append(np.vstack([alpha_x, alpha_y]).T)
+                            alpha_coords = np.vstack(alpha_coords)
+                        else:
+                            alpha_x, alpha_y = alpha_shape.boundary.coords.xy
+                            if not alpha_shape.is_closed:
                                 alpha_x = np.array(list(alpha_x) + [alpha_x[0]])
                                 alpha_y = np.array(list(alpha_y) + [alpha_y[0]])
-                            alpha_coords.append(np.vstack([alpha_x, alpha_y]).T)
-                        alpha_coords = np.vstack(alpha_coords)
-                    else:
-                        alpha_x, alpha_y = alpha_shape.boundary.coords.xy
-                        if not alpha_shape.is_closed:
-                            alpha_x = np.array(list(alpha_x) + [alpha_x[0]])
-                            alpha_y = np.array(list(alpha_y) + [alpha_y[0]])
-                        alpha_coords = np.vstack([alpha_x, alpha_y]).T
+                            alpha_coords = np.vstack([alpha_x, alpha_y]).T
 
-                    convexhull = scipy.spatial.ConvexHull(alpha_coords)
-                    convexhull_coords = alpha_coords[convexhull.vertices]
-
-                    bout_evasion_convexity_metric[bout_id] = shapely.Polygon(convexhull_coords).length / shapely.Polygon(alpha_coords).length
+                        convexhull = scipy.spatial.ConvexHull(alpha_coords)
+                        convexhull_coords = alpha_coords[convexhull.vertices]
+                        convexity = shapely.Polygon(convexhull_coords).length / shapely.Polygon(alpha_coords).length
+                        if compute_at != 'all':
+                            bout_evasion_convexity_metric[bout_id] = convexity
+                        else:
+                            bout_evasion_convexity_metric_timepoints.append(convexity)
+                    if compute_at == "all":
+                        bout_evasion_convexity_metric.append(np.array(bout_evasion_convexity_metric_timepoints))
+                else:
+                    if compute_at == "all":
+                        bout_evasion_convexity_metric.append(None)
 
             preds_bout_evasion_convexity_metric.append(bout_evasion_convexity_metric)
 
         return preds_bout_evasion_convexity_metric
 
-    def compute_bout_evasion_polarisation(self, margin: int = 0, compute_at: str = "end") -> List[NDArray[float]]:
+    def compute_bout_evasion_polarisation(self, margin: int = 0, compute_at: str = "end") -> Union[List[NDArray[float]], List[List[NDArray[float]]]]:
         agents_polarisation = self.compute_agent_polarisation()
 
         preds_bout_evasion_polarisation_metric = []
         for pid in range(self.n_preds):
-            bout_evasion_polarisation_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.)
+            bout_evasion_polarisation_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.) if compute_at != "all" else []
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
                 if self.bout_evasion_start_ids[pid][bout_id] >= 0:
-                    bout_start, _ = self.pred_bout_bounds_filtered[pid][bout_id]
+                    bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
                     evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
                     evasion_middle = int(bout_start + (self.bout_evasion_start_ids[pid][bout_id] + self.bout_evasion_end_ids[pid][bout_id]) / 2)
 
@@ -736,10 +741,18 @@ class Round:
                         polarisation = agents_polarisation[evasion_end]
                     elif compute_at == "middle":
                         polarisation = agents_polarisation[evasion_middle]
+                    elif compute_at == "all":
+                        polarisation = agents_polarisation[bout_start:bout_end]
                     else:
                         raise ValueError(f"Invalid compute_at value: {compute_at}")
 
-                    bout_evasion_polarisation_metric[bout_id] = polarisation
+                    if compute_at != "all":
+                        bout_evasion_polarisation_metric[bout_id] = polarisation
+                    else:
+                        bout_evasion_polarisation_metric.append(polarisation)
+                else:
+                    if compute_at == 'all':
+                        bout_evasion_polarisation_metric.append(None)
 
             preds_bout_evasion_polarisation_metric.append(bout_evasion_polarisation_metric)
 
