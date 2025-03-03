@@ -854,6 +854,8 @@ if __name__ == "__main__":
         round_types[round_type_id - 1] = round_types[round_type_id -1][:2].upper()
 
     exp = Round(file_path, n_preds=2 if round_type_id == 3 else 1,
+    if not os.path.exists(file_path):
+        file_path = f"./CoBeHumanExperimentsData/{round_id}/{round_types[round_type_id-1][:2].upper()}/{round_id}_{round_types[round_type_id-1][:2]}_{round_types[round_type_id - 1][2:]}.csv"
                 dist_tolerance=0.7, margin=10, min_bout_length=30,
                 speed_tolerance=0.15, speed_threshold=0.475, absolute_speed_threshold=6.65, #0.15, 5., 70.
                 bout_ids_to_remove=None, evasion_pred_dist_to_com_limit=None, evasion_vel_angle_change_limit=None)
