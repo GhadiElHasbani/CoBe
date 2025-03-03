@@ -650,7 +650,7 @@ class RoundPlotter:
     def plot_single_bout(self, bout_id: str, show_com: bool = True, keep_com_history: bool = True, fountain_metric_method: str = "convexhull",
                          keep_pred_history: bool = True, keep_agent_history: bool = True, force_2d: bool = True, with_metrics: bool = True,
                          show_pred_vel_vector: bool = True, mark_speed_spike: bool = False, speed_spike_threshold: float = 10.,
-                         save: bool = False, out_file_path: str = "bout.mp4", show: bool = True):
+                         save: bool = False, out_file_path: str = "bout.mp4", show: bool = True, dbscan_eps: float = 0.15):
         def update(t: int, args_dict: Dict) -> Dict:
 
             args_dict['ax'].cla()
@@ -693,6 +693,12 @@ class RoundPlotter:
                                                s=f"M Polarisation metric: {bout_evasion_polarisation_m:.3f}", fontsize=fontsize)
                 args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=np.max(pred_speed)*0.85,
                                                s=f"E Polarisation metric: {bout_evasion_polarisation_e:.3f}", fontsize=fontsize)
+
+                isolated_individuals = bout_isolated_individuals[t]
+                if len(isolated_individuals) > 0:
+                    for isolated_individual in isolated_individuals:
+                        args_dict['ax'].scatter(*agents_data[isolated_individual][t], s=80, facecolors='none', edgecolors='black')
+
                 if not with_metrics:
                     self.update_trajectories(agents_data=[agents_data[aid][bout_evasion_start_id:bout_evasion_end_id] for aid in range(self.round.n_agents)],
                                              preds_data=[preds_data[pid][bout_evasion_start_id:bout_evasion_end_id] for pid in range(self.round.n_preds)],
@@ -759,6 +765,8 @@ class RoundPlotter:
         bout_evasion_convexity_e = self.round.compute_bout_evasion_convexity(compute_at="end")[pid_in_bout][bout_idx]
         bout_evasion_polarisation_m = self.round.compute_bout_evasion_polarisation(compute_at="middle")[pid_in_bout][bout_idx]
         bout_evasion_polarisation_e = self.round.compute_bout_evasion_polarisation(compute_at="end")[pid_in_bout][bout_idx]
+
+        bout_isolated_individuals = self.round.detect_isolated_agents(dbscan_eps=dbscan_eps)[pid_in_bout][bout_idx]
 
         if with_metrics:
             circularity = self.round.compute_bout_evasion_circularity(all_timepoints=True)[pid_in_bout][bout_idx]

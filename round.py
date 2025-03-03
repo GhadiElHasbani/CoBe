@@ -12,6 +12,8 @@ import os
 import file_last_modification_time_finder
 import alpha_shapes
 
+import sklearn
+
 
 class Round:
 
@@ -327,6 +329,16 @@ class Round:
         prey_sides = self.check_which_side_of_predator_preys_on()
 
         return [np.logical_and(np.sum(prey_sides[pid], axis=-1) != -self.n_agents, np.sum(prey_sides[pid], axis=-1) != self.n_agents) for pid in range(self.n_preds)]
+
+    def compute_agent_distance_to_nearest_neighbor(self) -> List[NDArray[float]]:
+        agent_positions = transpose_list_of_arrays(self.agent_data_arrs)
+        agent_nearest_neighbors = []
+        for agent_positions_arr in agent_positions:
+            dist_matrix = scipy.spatial.distance.squareform(scipy.spatial.distance.pdist(agent_positions_arr, metric=euclidean_distance))
+
+            agent_nearest_neighbors.append(np.apply_along_axis(lambda arr: np.nanmin([val if val != 0 else np.nan for val in arr]), 0, dist_matrix))
+
+        return transpose_list_of_arrays(agent_nearest_neighbors)
 
     def segment_into_bouts(self,
                            dist_tolerance: float = 0.9,
@@ -751,6 +763,25 @@ class Round:
 
         return preds_bout_evasion_polarisation_metric
 
+    def detect_isolated_agents(self, dbscan_eps: float = 0.15) -> List[List[List[List[int]]]]:
+        agent_dist_to_nn = transpose_list_of_arrays(self.compute_agent_distance_to_nearest_neighbor())
+
+        isolated_individuals = []
+        for pid in range(self.n_preds):
+            pred_isolated_individuals = []
+            for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
+                bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
+                pred_bout_isolated_individuals = []
+                for tid in range(bout_start, bout_end):
+                    data = agent_dist_to_nn[tid]
+                    dbscan = sklearn.cluster.DBSCAN(eps=dbscan_eps)
+                    outliers = dbscan.fit_predict(data)
+                    pred_bout_isolated_individuals.append([outlier[0] for outlier in np.argwhere(outliers != 0)])
+                pred_isolated_individuals.append(pred_bout_isolated_individuals)
+            isolated_individuals.append(pred_isolated_individuals)
+
+        return isolated_individuals
+
     def write_bout_info(self, output_path, exp_plotter_args: Dict[str, Any],
                         mark_speed_spike: bool = False, speed_spike_threshold: float = 10.) -> None:
         exp_plotter = RoundPlotter(self, **exp_plotter_args)
@@ -813,7 +844,7 @@ class Round:
 if __name__ == "__main__":
     #find CoBeHumanExperimentsData/ -name '*.zip' -exec sh -c 'unzip -d "${1%.*}" "$1"' _ {} \;
 
-    round_id = "2837465091"
+    round_id = "6095799011"#"2431419351"
     round_types = ["P1", "P2", "Shared", "P1R1", "P1R2", "P1R3"]
     round_type_id = 2
     file_path = f"./CoBeHumanExperimentsData/{round_id}/{round_types[round_type_id-1] if round_type_id < 4 else round_types[round_type_id-1][:2].upper()}/{round_id}_{round_types[round_type_id-1][:2].upper() if round_type_id < 4 else round_types[round_type_id-1]}.csv"
