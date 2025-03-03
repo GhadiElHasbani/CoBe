@@ -618,17 +618,20 @@ class Round:
             convex_hull_points = []
             bounding_circles = []
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
-                if self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                if all_timepoints or self.bout_evasion_start_ids[pid][bout_id] >= 0:
                     bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
                     evasion_start = max([0, bout_start + self.bout_evasion_start_ids[pid][bout_id] - margin])
                     evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
 
                     agents_evasion_positions = turn_list_of_2d_arrays_into_3d_array(transpose_list_of_arrays([self.agent_data_arrs[aid][bout_start:bout_end] for aid in range(self.n_agents)]))
 
-                    pred_dist_to_agent_com = preds_dist_to_agent_com[pid][evasion_start:evasion_end]
+                    if all_timepoints:
+                        ids = range(agents_evasion_positions.shape[0])
+                    else:
+                        pred_dist_to_agent_com = preds_dist_to_agent_com[pid][evasion_start:evasion_end]
 
-                    min_pred_dist_to_com_idx = np.argmin(pred_dist_to_agent_com) + max([0, self.bout_evasion_start_ids[pid][bout_id] - margin])
-                    ids = range(agents_evasion_positions.shape[0]) if all_timepoints else [min_pred_dist_to_com_idx]
+                        min_pred_dist_to_com_idx = np.argmin(pred_dist_to_agent_com) + max([0, self.bout_evasion_start_ids[pid][bout_id] - margin])
+                        ids = [min_pred_dist_to_com_idx]
 
                     bout_evasion_circularity_timepoints = []
                     for id in ids:
@@ -643,12 +646,11 @@ class Round:
 
                         if not all_timepoints:
                             bout_evasion_circularity_metric[bout_id] = circularity
-                        else:
-                            bout_evasion_circularity_timepoints.append(circularity)
-                        if id == min_pred_dist_to_com_idx:
                             bounding_circles.append(min_bounding_circle.exterior.coords)
                             convex_hulls.append(convexhull)
                             convex_hull_points.append(agent_pos_at_min_pred_dist_to_com)
+                        else:
+                            bout_evasion_circularity_timepoints.append(circularity)
 
                     if all_timepoints:
                         bout_evasion_circularity_metric.append(np.array(bout_evasion_circularity_timepoints))
@@ -657,9 +659,6 @@ class Round:
                     bounding_circles.append(None)
                     convex_hulls.append(None)
                     convex_hull_points.append(None)
-
-                    if all_timepoints:
-                        bout_evasion_circularity_metric.append(None)
 
             self.preds_bounding_circles.append(bounding_circles)
             self.preds_convex_hull_points.append(convex_hull_points)
@@ -673,14 +672,14 @@ class Round:
         for pid in range(self.n_preds):
             bout_evasion_convexity_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.) if compute_at != "all" else []
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
-                if self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                if compute_at == "all" or self.bout_evasion_start_ids[pid][bout_id] >= 0:
                     bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
-                    evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
-                    evasion_middle = int(bout_start + (self.bout_evasion_start_ids[pid][bout_id] + self.bout_evasion_end_ids[pid][bout_id]) / 2)
 
                     if compute_at == "end":
+                        evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
                         agents_evasion_positions = [np.vstack([self.agent_data_arrs[aid][evasion_end] for aid in range(self.n_agents)])]
                     elif compute_at == "middle":
+                        evasion_middle = int(bout_start + (self.bout_evasion_start_ids[pid][bout_id] + self.bout_evasion_end_ids[pid][bout_id]) / 2)
                         agents_evasion_positions = [np.vstack([self.agent_data_arrs[aid][evasion_middle] for aid in range(self.n_agents)])]
                     elif compute_at == "all":
                         agents_evasion_positions = transpose_list_of_arrays([self.agent_data_arrs[aid][bout_start:bout_end] for aid in range(self.n_agents)])
@@ -717,9 +716,6 @@ class Round:
                             bout_evasion_convexity_metric_timepoints.append(convexity)
                     if compute_at == "all":
                         bout_evasion_convexity_metric.append(np.array(bout_evasion_convexity_metric_timepoints))
-                else:
-                    if compute_at == "all":
-                        bout_evasion_convexity_metric.append(None)
 
             preds_bout_evasion_convexity_metric.append(bout_evasion_convexity_metric)
 
@@ -732,14 +728,14 @@ class Round:
         for pid in range(self.n_preds):
             bout_evasion_polarisation_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.) if compute_at != "all" else []
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
-                if self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                if compute_at == "all" or self.bout_evasion_start_ids[pid][bout_id] >= 0:
                     bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
-                    evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
-                    evasion_middle = int(bout_start + (self.bout_evasion_start_ids[pid][bout_id] + self.bout_evasion_end_ids[pid][bout_id]) / 2)
 
                     if compute_at == "end":
+                        evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
                         polarisation = agents_polarisation[evasion_end]
                     elif compute_at == "middle":
+                        evasion_middle = int(bout_start + (self.bout_evasion_start_ids[pid][bout_id] + self.bout_evasion_end_ids[pid][bout_id]) / 2)
                         polarisation = agents_polarisation[evasion_middle]
                     elif compute_at == "all":
                         polarisation = agents_polarisation[bout_start:bout_end]
@@ -750,9 +746,6 @@ class Round:
                         bout_evasion_polarisation_metric[bout_id] = polarisation
                     else:
                         bout_evasion_polarisation_metric.append(polarisation)
-                else:
-                    if compute_at == 'all':
-                        bout_evasion_polarisation_metric.append(None)
 
             preds_bout_evasion_polarisation_metric.append(bout_evasion_polarisation_metric)
 
@@ -766,6 +759,10 @@ class Round:
         preds_acc = self.compute_predator_acceleration(smooth=False)
         preds_attack_angle = self.compute_predator_attack_angle(smooth=False)
         preds_n_preys_behind = self.compute_n_preys_behind_predator()
+
+        circularity = self.compute_bout_evasion_circularity(all_timepoints=True)
+        convexity = self.compute_bout_evasion_convexity(compute_at="all")
+        polarisation = self.compute_bout_evasion_polarisation(compute_at="all")
 
         for pid_in_bout in range(self.n_preds):
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid_in_bout])):
@@ -785,7 +782,7 @@ class Round:
                     f.close()
 
                 with open(output_csv, 'a') as output_file:
-                    header = ",".join(["timestep", "timestamp", "coms"])
+                    header = ",".join(["timestep", "timestamp", "coms", "circularity", "convexity", "polarisation"])
                     for aid in range(self.n_agents):
                         header = ",".join([header, f"x{aid}", f"y{aid}"])
                     for pid in range(self.n_preds):
@@ -794,7 +791,10 @@ class Round:
                     output_file.write(f"{header}\n")
 
                     for idx in range(bout_start, bout_end):
-                        line = ",".join([str(self.timesteps[idx]), str(self.timestamps[idx]), str(com_speed[idx])])
+                        line = ",".join([str(self.timesteps[idx]), str(self.timestamps[idx]), str(com_speed[idx]),
+                                         str(circularity[pid_in_bout][bout_id][idx - bout_start]),
+                                         str(convexity[pid_in_bout][bout_id][idx - bout_start]),
+                                         str(polarisation[pid_in_bout][bout_id][idx - bout_start])])
                         for aid in range(self.n_agents):
                             line = ",".join([line, str(self.agents_data[aid][idx][0]), str(self.agents_data[aid][idx][1])])
                         for pid in range(self.n_preds):

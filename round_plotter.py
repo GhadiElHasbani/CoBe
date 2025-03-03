@@ -676,25 +676,6 @@ class RoundPlotter:
                                      keep_com_history=keep_com_history, keep_agent_history=keep_agent_history, force_2d=force_2d)
 
             if bout_evasion_start_time >= 0:
-                if with_metrics:
-                    args_dict['ax_circularity'].plot(timestamps, circularity, color=self.colors[pid_in_bout][:-1])
-                    args_dict['ax_convexity'].plot(timestamps, convexity, color=self.colors[pid_in_bout][:-1])
-                    args_dict['ax_polarisation'].plot(timestamps, polarisation, color=self.colors[pid_in_bout][:-1])
-
-                    args_dict['ax_circularity'].axvline(x=bout_evasion_start_time, ymin=0, ymax=np.max(pred_speed),
-                                                      color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
-                    args_dict['ax_circularity'].axvline(x=bout_evasion_end_time, ymin=0, ymax=np.max(pred_speed),
-                                                      color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
-
-                    args_dict['ax_convexity'].axvline(x=bout_evasion_start_time, ymin=0, ymax=np.max(pred_speed),
-                                                      color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
-                    args_dict['ax_convexity'].axvline(x=bout_evasion_end_time, ymin=0, ymax=np.max(pred_speed),
-                                                      color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
-
-                    args_dict['ax_polarisation'].axvline(x=bout_evasion_start_time, ymin=0, ymax=np.max(pred_speed),
-                                                      color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
-                    args_dict['ax_polarisation'].axvline(x=bout_evasion_end_time, ymin=0, ymax=np.max(pred_speed),
-                                                      color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
 
                 args_dict['ax_bout_info'].axvline(x=bout_evasion_start_time, ymin=0, ymax=np.max(pred_speed),
                                                   color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
@@ -718,14 +699,7 @@ class RoundPlotter:
                                              ax=args_dict['ax_evasion_trajectory'], t=len(timestamps[bout_evasion_start_id:bout_evasion_end_id]) - 1, z=timestamps[bout_evasion_start_id:bout_evasion_end_id][-1],
                                              show_com=show_com, agent_com=agent_com[bout_evasion_start_id:bout_evasion_end_id],
                                              show_pred_vel_vector=False, keep_pred_history=True, show_arena_borders=True, force_2d=force_2d,
-                                             keep_com_history=keep_com_history, keep_agent_history=True
-                                             )
-                else:
-                    for metric_ax_name in ['ax_circularity', 'ax_convexity', 'ax_polarisation']:
-                        args_dict[metric_ax_name].axvline(x=bout_evasion_start_time, ymin=0, ymax=np.max(pred_speed),
-                                                          color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
-                        args_dict[metric_ax_name].axvline(x=bout_evasion_end_time, ymin=0, ymax=np.max(pred_speed),
-                                                          color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
+                                             keep_com_history=keep_com_history, keep_agent_history=True)
 
                 if fountain_metric_method == "convexhull" and not with_metrics:
                     hull = self.round.preds_convex_hulls[pid_in_bout][bout_idx]
@@ -736,21 +710,22 @@ class RoundPlotter:
 
                     bounding_circle_x, bounding_circle_y = self.round.preds_bounding_circles[pid_in_bout][bout_idx].xy
                     args_dict['ax_evasion_trajectory'].plot(bounding_circle_x, bounding_circle_y)
-            else:
-                if with_metrics:
-                    args_dict['ax_circularity'].set_xticks([])
-                    args_dict['ax_circularity'].set_yticks([])
-                    args_dict['ax_convexity'].set_xticks([])
-                    args_dict['ax_convexity'].set_yticks([])
-                    args_dict['ax_polarisation'].set_xticks([])
-                    args_dict['ax_polarisation'].set_yticks([])
 
+            if with_metrics:
+                metrics = [circularity, convexity, polarisation]
+                for metric_id, metric_ax_name in enumerate(['ax_circularity', 'ax_convexity', 'ax_polarisation']):
+                    args_dict[metric_ax_name].plot(timestamps, metrics[metric_id], color=self.colors[pid_in_bout][:-1])
+                    args_dict[metric_ax_name].axvline(x=bout_evasion_start_time, ymin=0, ymax=1,
+                                                      color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
+                    args_dict[metric_ax_name].axvline(x=bout_evasion_end_time, ymin=0, ymax=1,
+                                                      color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
+                    args_dict[metric_ax_name].axvline(x=timestamps[t], ymin=0, ymax=1)
             if mark_speed_spike:
                 args_dict['ax_bout_info'].text(x=(timestamps[0] + timestamps[-1])/2, y=np.max(pred_speed)*1.05,
                                                s=f"Speed spike present: {speed_spike_present}")
 
             # add time bar
-            args_dict['ax_bout_info'].axvline(x=timestamps[t], ymin=-0.1, ymax=np.max(pred_speed)*0.98)
+            args_dict['ax_bout_info'].axvline(x=timestamps[t], ymin=0, ymax=np.max(pred_speed))
             args_dict['ax_bout_info'].set_xlim([timestamps[0], timestamps[-1]])
             #add speed
             args_dict['ax_bout_info'].set_ylim([0, np.max(pred_speed)*1.1])
