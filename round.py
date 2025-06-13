@@ -14,6 +14,8 @@ import alpha_shapes
 
 import sklearn
 
+import h5py
+
 
 class Round:
 
@@ -37,7 +39,10 @@ class Round:
                  absolute_speed_threshold: float = None,
                  bout_ids_to_remove: Iterable[str] = None,
                  evasion_vel_angle_change_limit: float = 90.,
-                 evasion_pred_dist_to_com_limit: float = 0.4
+                 evasion_pred_dist_to_com_limit: float = 0.4,
+                 dbscan_eps: float = 0.15,
+                 detect_isolated_individuals: bool = True,
+                 suffix: str = None
                  ):
         # Save experiment parameters
         self.file_path = file_path
@@ -45,7 +50,8 @@ class Round:
         self.T = T
         self.n_agents = n_agents
         self.n_preds = n_preds
-        self.suffix = file_path.split('/')[-2][1]
+        self.round_id = suffix if suffix is not None else (file_path.split('/')[-2][1:2] if self.n_preds == 1 else file_path.split('/')[-2][:2])
+        self.experiment_id = self.file_path.split('/')[-3]
 
         width = ((2 ** 0.5) * radius + radius * 2) / 2
 
@@ -160,10 +166,17 @@ class Round:
         self.segment_into_bouts(dist_tolerance=dist_tolerance, margin=margin,
                                 min_bout_length=min_bout_length,
                                 speed_threshold=speed_threshold, speed_tolerance=speed_tolerance,
-                                absolute_speed_threshold=absolute_speed_threshold,
+                                 absolute_speed_threshold=absolute_speed_threshold,
                                 bout_ids_to_remove=bout_ids_to_remove)
         self.compute_bout_evasion_bounds(vel_angle_change_limit=evasion_vel_angle_change_limit,
                                          pred_dist_to_com_limit=evasion_pred_dist_to_com_limit)
+
+        if detect_isolated_individuals:
+            self.preds_agents_rel_pos = None
+            self.compute_agents_rel_pos()
+
+            self.preds_isolated_individuals = None
+            self.detect_isolated_agents(dbscan_eps=dbscan_eps)
 
         print("Round Summary:")
         print(f"-> fs: {self.avg_fs}, dt = {1/self.avg_fs}")
@@ -221,11 +234,14 @@ class Round:
     def compute_agent_velocity(self):
         return self.compute_velocity(self.agent_data_arrs)
 
-    def compute_agent_polarisation(self):
+    def compute_agent_polarisation(self, smooth: bool = True, smoothing_args: Dict[str, Any] = None):
         agents_velocity = self.compute_agent_velocity()
         normalized_agents_velocity = [agent_velocity / np.linalg.norm(agent_velocity, axis=-1).reshape((-1, 1)) for agent_velocity in agents_velocity]
         normalized_agents_velocity_T = transpose_list_of_arrays(normalized_agents_velocity)
-        return np.array([np.linalg.norm(np.mean(normalized_agent_velocity_T, axis=0)) for normalized_agent_velocity_T in normalized_agents_velocity_T])
+        polarisation = np.array([np.linalg.norm(np.mean(normalized_agent_velocity_T, axis=0)) for normalized_agent_velocity_T in normalized_agents_velocity_T])
+        if smooth:
+            polarisation = smooth_metric([polarisation], smoothing_args)[0]
+        return polarisation
 
     def compute_agent_speed(self) -> List[NDArray[float]]:
         agents_data_speed = self.compute_speed(self.agent_data_arrs)
@@ -234,8 +250,14 @@ class Round:
     def compute_agent_com_speed(self) -> NDArray[float]:
         return self.compute_speed([self.agent_com])[0]
 
-    def compute_predator_speed(self) -> List[NDArray[float]]:
+    def compute_agent_com_velocity(self) -> NDArray[float]:
+        return self.compute_velocity([self.agent_com])[0]
+
+    def compute_predator_speed(self, smooth: bool = False, smoothing_args: Dict = None) -> List[NDArray[float]]:
         preds_speed = self.compute_speed(self.pred_data_arrs)
+        if smooth and smoothing_args is not None:
+            preds_speed = smooth_metric(data_arrs=preds_speed, smoothing_args=smoothing_args)
+
         return preds_speed
 
     def compute_predator_to_agent_com_speed_ratio(self) -> List[NDArray[float]]:
@@ -246,7 +268,7 @@ class Round:
     def compute_acceleration(self, datas_vel: List[NDArray[float]],
                              smooth: bool = True, smoothing_args: Dict = None) -> List[NDArray[float]]:
         datas_acc = [np.insert(np.diff(data_vel) / (np.diff(self.timestamps)), 0, [0., ]) for data_vel in datas_vel]
-        if smooth:
+        if smooth and smoothing_args is not None:
             datas_acc = smooth_metric(data_arrs=datas_acc, smoothing_args=smoothing_args)
 
         return [np.insert(data_acc, 0, [0., ]) for data_acc in datas_acc]
@@ -348,6 +370,7 @@ class Round:
                            speed_tolerance: float = 1.,
                            absolute_speed_threshold: float = None,
                            bout_ids_to_remove: List[str] = None):
+        self.margin = margin
         dist_threshold = dist_tolerance*self.width/2
 
         print(f"Segmenting bouts using threshold of {dist_threshold}, with a margin of {margin} observations, on predator distance from arena center {self.center}")
@@ -357,7 +380,7 @@ class Round:
         temp = [get_bounds(pred_points_during_bouts, margin=margin) for pred_points_during_bouts in pred_points_during_bouts]
         self.pred_bout_bounds = [temp_el[0] for temp_el in temp]
         self.pred_bout_lengths = [temp_el[1] for temp_el in temp]
-        self.pred_bout_ids = [np.arange(len(self.pred_bout_bounds[pid])).astype(str) + np.full(len(self.pred_bout_bounds[pid]), '_' + (self.suffix if self.n_preds == 1 else str(pid + 1) + "_SH")) for pid in range(self.n_preds)]
+        self.pred_bout_ids = [np.arange(len(self.pred_bout_bounds[pid])).astype(str) + np.full(len(self.pred_bout_bounds[pid]), '_' + (self.round_id if self.n_preds == 1 else str(pid + 1) + "_SH")) for pid in range(self.n_preds)]
         self.pred_bout_ids_filtered = self.pred_bout_ids
         self.pred_bout_bounds_filtered = self.pred_bout_bounds
 
@@ -383,7 +406,6 @@ class Round:
 
         self.pred_bout_bounds_filtered = [np.array(self.pred_bout_bounds_filtered[pid])[filters[pid]] for pid in range(self.n_preds)]
         self.pred_bout_ids_filtered = [self.pred_bout_ids_filtered[pid][filters[pid]] for pid in range(self.n_preds)]
-
         print(f"--> Discarded bouts: {self.pred_bout_ids_discarded[-1]}")
 
     def apply_bout_length_filter(self, min_bout_length: int):
@@ -399,7 +421,7 @@ class Round:
     def apply_bout_low_speed_filter(self, speed_threshold: float, speed_tolerance: float):
         print(f"Discarding bouts with speed less than {speed_threshold} for more than {speed_tolerance*100}% of observations")
         preds_data_vel = self.compute_predator_speed()
-        pred_bouts_vel = [[preds_data_vel[pid][self.pred_bout_bounds_filtered[pid][i][0]:self.pred_bout_bounds_filtered[pid][i][1]] for i in range(len(self.pred_bout_bounds_filtered[pid]))] for pid in range(self.n_preds)]
+        pred_bouts_vel = [[preds_data_vel[pid][self.pred_bout_bounds_filtered[pid][i][0]+self.margin:self.pred_bout_bounds_filtered[pid][i][1]-self.margin] for i in range(len(self.pred_bout_bounds_filtered[pid]))] for pid in range(self.n_preds)]
         pred_bout_speed_filters = [np.array([not np.sum(np.array(pred_bouts_vel[pid][i]) < speed_threshold)/len(pred_bouts_vel[pid][i]) > speed_tolerance for i in range(len(pred_bouts_vel[pid]))]) for pid in range(self.n_preds)]
 
         self.filter_bouts(filters=pred_bout_speed_filters)
@@ -415,7 +437,7 @@ class Round:
         pred_bout_abs_speed_filters = [[] for _ in range(self.n_preds)]
         for pid in range(self.n_preds):
             for pred_bout_bound in self.pred_bout_bounds_filtered[pid]:
-                pred_bouts_vel = [preds_data_vel[pid][pred_bout_bound[0]:pred_bout_bound[1]] for pid in
+                pred_bouts_vel = [preds_data_vel[pid][pred_bout_bound[0]+self.margin:pred_bout_bound[1]-self.margin] for pid in
                                   range(self.n_preds)]
 
                 pred_bout_abs_speed_filter = True
@@ -424,10 +446,10 @@ class Round:
                     if np.any(pred_bouts_vel[pid2] > absolute_speed_threshold):
                         invalid_val_ids = np.where(pred_bouts_vel[pid2] > absolute_speed_threshold)
                         if pid == pid2:
-                            dist_filter = np.all(pred_dists_to_border[pid2][pred_bout_bound[0]:pred_bout_bound[1]][
-                                                     invalid_val_ids] < 0.2 * self.width / 2)
+                            dist_filter = np.all(pred_dists_to_border[pid2][pred_bout_bound[0]+self.margin:pred_bout_bound[1]-self.margin][
+                                                     invalid_val_ids] < 0.3 * self.width / 2)
                         else:
-                            dist_filter = np.all(pred_dists_to_com[pid2][pred_bout_bound[0]:pred_bout_bound[1]][
+                            dist_filter = np.all(pred_dists_to_com[pid2][pred_bout_bound[0]+self.margin:pred_bout_bound[1]-self.margin][
                                                      invalid_val_ids] > 0.3 * self.width / 2)
                         pred_bout_abs_speed_filter = pred_bout_abs_speed_filter and dist_filter
                 pred_bout_abs_speed_filters[pid].append(pred_bout_abs_speed_filter)
@@ -486,7 +508,9 @@ class Round:
         self.bout_evasion_end_ids = [[] for _ in range(self.n_preds)]
         for pid in range(self.n_preds):
             evasions_count = 0
-            for bout_start, bout_end in self.pred_bout_bounds_filtered[pid]:
+            for i in range(len(self.pred_bout_bounds_filtered[pid])):
+                bout_start, bout_end = self.pred_bout_bounds_filtered[pid][i]
+                bout_id = self.pred_bout_ids_filtered[pid][i]
                 n_preys_behind_pred_bout = n_preys_behind_pred[pid][bout_start:bout_end]
                 timestamps_bout = self.timestamps[bout_start:bout_end]
                 pred_dist_to_com_bout = pred_dist_to_com_arrs[pid][bout_start:bout_end]
@@ -507,21 +531,22 @@ class Round:
 
                     conditions = not tid == 0 and dist_to_com_condition and vel_angle_change_condition
 
-                    prey_behind_sides = pred_prey_sides_bout[tid][preys_behind_pred_bout[tid] == 1] if check_prey_on_both_sides else True
-                    prey_behind_from_both_sides = np.any(prey_behind_sides == 1) and np.any(prey_behind_sides == -1)
-
-                    if conditions:
+                    prey_behind_sides = pred_prey_sides_bout[tid][preys_behind_pred_bout[tid] == 1]
+                    prey_behind_from_both_sides = np.any(prey_behind_sides == 1) and np.any(prey_behind_sides == -1) if check_prey_on_both_sides else True
+                    if conditions and (i == 0 or timestamps_bout[tid] > self.bout_evasion_end_times[pid][-1]):
                         if n_preys_behind == 0:
                             all_preys_in_front_prev = True
 
                         if not evasion_started:
                             if all_preys_in_front_prev and self.n_agents > n_preys_behind > 0 and tid != len(n_preys_behind_pred_bout) - 1:
                                 start_idx = max([0, tid - margin])
+                                #if i == 0 or timestamps_bout[start_idx] > self.bout_evasion_end_times[pid][-1]:
                                 self.bout_evasion_start_times[pid].append(timestamps_bout[start_idx])
                                 self.bout_evasion_start_ids[pid].append(start_idx)
                                 evasions_count += 1
                                 evasion_started = True
                                 all_preys_in_front_prev = False
+
                         else:
                             if jitter_reset_mechanism and not evasion_ended and n_preys_behind == 0:
                                 self.bout_evasion_start_times[pid].pop()
@@ -529,17 +554,15 @@ class Round:
                                 evasions_count -= 1
                                 evasion_started = False
                                 prey_behind_on_both_sides_during_evasion = False
-                            elif prey_behind_from_both_sides:
+                            elif prey_behind_from_both_sides and self.n_agents > n_preys_behind > 0:
                                 prey_behind_on_both_sides_during_evasion = True
-
                             elif n_preys_behind == self.n_agents:
-                                if prey_behind_on_both_sides_during_evasion:
+                                if (not check_prey_on_both_sides) or (check_prey_on_both_sides and prey_behind_on_both_sides_during_evasion):
                                     end_idx = min([len(timestamps_bout) - 1, tid + margin])
                                     self.bout_evasion_end_times[pid].append(timestamps_bout[end_idx])
                                     self.bout_evasion_end_ids[pid].append(end_idx)
                                     evasion_ended = True
-
-                                break
+                                    break
 
                 if evasion_started and not evasion_ended:
                     if self.bout_evasion_start_ids[pid][-1] == len(timestamps_bout) - 1:
@@ -565,23 +588,30 @@ class Round:
 
             print(f"--> {evasions_count} evasions detected for predator {pid + 1}")
 
-    def compute_bout_evasion_straightness_metric(self, margin: int = 0) -> List[NDArray[float]]:
-        preds_bout_evasion_straightness_metric = []
+    def compute_bout_evasion_straightness_metric(self, margin: int = 0, during_evasion: bool = True) -> List[NDArray[float]]:
+        preds_bout_straightness_metric = []
         for pid in range(self.n_preds):
-            bout_evasion_straightness_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.)
+            bout_straightness_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.)
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
-                if self.bout_evasion_start_ids[pid][bout_id] >= 0:
-                    bout_start, _ = self.pred_bout_bounds_filtered[pid][bout_id]
-                    evasion_start, evasion_end = self.bout_evasion_start_ids[pid][bout_id], self.bout_evasion_end_ids[pid][bout_id]
-                    evasion_positions = self.pred_data_arrs[pid][max([0, bout_start + evasion_start-margin]):min([bout_start + evasion_end+margin, len(self.pred_data_arrs[pid])])]
+                bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
+                if during_evasion:
+                    if self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                        evasion_start, evasion_end = self.bout_evasion_start_ids[pid][bout_id], self.bout_evasion_end_ids[pid][bout_id]
+                        evasion_positions = self.pred_data_arrs[pid][max([0, bout_start + evasion_start-margin]):min([bout_start + evasion_end+margin, len(self.pred_data_arrs[pid])])]
 
-                    distance_traveled = compute_distance_traveled(evasion_positions)
-                    displacement = euclidean_distance(evasion_positions[0], evasion_positions[-1])
-                    bout_evasion_straightness_metric[bout_id] = displacement/distance_traveled
+                        distance_traveled = compute_distance_traveled(evasion_positions)
+                        displacement = euclidean_distance(evasion_positions[0], evasion_positions[-1])
+                        bout_straightness_metric[bout_id] = displacement/distance_traveled
+                else:
+                    bout_positions = self.pred_data_arrs[pid][bout_start:bout_end]
 
-            preds_bout_evasion_straightness_metric.append(bout_evasion_straightness_metric)
+                    distance_traveled = compute_distance_traveled(bout_positions)
+                    displacement = euclidean_distance(bout_positions[0], bout_positions[-1])
+                    bout_straightness_metric[bout_id] = displacement / distance_traveled
 
-        return preds_bout_evasion_straightness_metric
+            preds_bout_straightness_metric.append(bout_straightness_metric)
+
+        return preds_bout_straightness_metric
 
     def compute_bout_evasion_fountain_metric(self, margin: int = 0, method: str = "distance", n_closest_agents: int = 10) -> List[NDArray[float]]:
         agents_vel = self.compute_agent_velocity()
@@ -617,23 +647,28 @@ class Round:
 
         return preds_bout_evasion_fountain_metric
 
-    def compute_bout_evasion_circularity(self, margin: int = 0, all_timepoints: bool = False) -> Union[List[NDArray[float]], List[List[NDArray[float]]]]:
+    def compute_bout_evasion_circularity(self, all_timepoints: bool = False,
+                                         fit: bool = True, fit_for: str = "all", fit_windows: List[List[int]] = None,
+                                         smooth: bool = True, smoothing_args: Dict[str, Any] = None,
+                                         ) -> Tuple[Union[List[NDArray[float]], List[List[NDArray[float]]]], List]:
         preds_dist_to_agent_com = self.compute_predator_distance_to_agent_com()
 
         preds_bout_evasion_circularity_metric = []
+        preds_lr_info = []
         self.preds_convex_hulls = []
         self.preds_convex_hull_points = []
         self.preds_bounding_circles = []
         for pid in range(self.n_preds):
             bout_evasion_circularity_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.) if not all_timepoints else []
+            lr_info = []
             convex_hulls = []
             convex_hull_points = []
             bounding_circles = []
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
                 if all_timepoints or self.bout_evasion_start_ids[pid][bout_id] >= 0:
                     bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
-                    evasion_start = max([0, bout_start + self.bout_evasion_start_ids[pid][bout_id] - margin])
-                    evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
+                    evasion_start = bout_start + self.bout_evasion_start_ids[pid][bout_id]
+                    evasion_end = bout_start + self.bout_evasion_end_ids[pid][bout_id]
 
                     agents_evasion_positions = turn_list_of_2d_arrays_into_3d_array(transpose_list_of_arrays([self.agent_data_arrs[aid][bout_start:bout_end] for aid in range(self.n_agents)]))
 
@@ -642,7 +677,7 @@ class Round:
                     else:
                         pred_dist_to_agent_com = preds_dist_to_agent_com[pid][evasion_start:evasion_end]
 
-                        min_pred_dist_to_com_idx = np.argmin(pred_dist_to_agent_com) + max([0, self.bout_evasion_start_ids[pid][bout_id] - margin])
+                        min_pred_dist_to_com_idx = np.argmin(pred_dist_to_agent_com) + self.bout_evasion_start_ids[pid][bout_id]
                         ids = [min_pred_dist_to_com_idx]
 
                     bout_evasion_circularity_timepoints = []
@@ -665,7 +700,22 @@ class Round:
                             bout_evasion_circularity_timepoints.append(circularity)
 
                     if all_timepoints:
-                        bout_evasion_circularity_metric.append(np.array(bout_evasion_circularity_timepoints))
+                        bout_evasion_circularity_timepoints = np.array(bout_evasion_circularity_timepoints)
+                        if smooth:
+                            bout_evasion_circularity_timepoints = smooth_metric([bout_evasion_circularity_timepoints], smoothing_args)[0]
+
+                        if fit and self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                            circularity_to_fit = bout_evasion_circularity_timepoints[self.bout_evasion_start_ids[pid][bout_id]:self.bout_evasion_end_ids[pid][bout_id]]
+                            if fit_for != "all":
+                                if fit_windows is None:
+                                    circularity_to_fit = circularity_to_fit[:np.argmax(circularity_to_fit) + 1]
+                                else:
+                                    circularity_to_fit = circularity_to_fit[:fit_windows[pid][bout_id] + 1]
+
+                            lr_info.append(fit_lr_to_timeseries(circularity_to_fit))
+                        else:
+                            lr_info.append(None)
+                        bout_evasion_circularity_metric.append(bout_evasion_circularity_timepoints)
 
                 else:
                     bounding_circles.append(None)
@@ -676,10 +726,11 @@ class Round:
             self.preds_convex_hull_points.append(convex_hull_points)
             self.preds_convex_hulls.append(convex_hulls)
             preds_bout_evasion_circularity_metric.append(bout_evasion_circularity_metric)
+            preds_lr_info.append(lr_info)
 
-        return preds_bout_evasion_circularity_metric
+        return preds_bout_evasion_circularity_metric, preds_lr_info
 
-    def compute_bout_evasion_convexity(self, margin: int = 0, compute_at: str = "end") -> Union[List[NDArray[float]], List[List[NDArray[float]]]]:
+    def compute_bout_evasion_convexity(self, compute_at: str = "end") -> Union[List[NDArray[float]], List[List[NDArray[float]]]]:
         preds_bout_evasion_convexity_metric = []
         for pid in range(self.n_preds):
             bout_evasion_convexity_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.) if compute_at != "all" else []
@@ -688,7 +739,7 @@ class Round:
                     bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
 
                     if compute_at == "end":
-                        evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
+                        evasion_end = bout_start + self.bout_evasion_end_ids[pid][bout_id]
                         agents_evasion_positions = [np.vstack([self.agent_data_arrs[aid][evasion_end] for aid in range(self.n_agents)])]
                     elif compute_at == "middle":
                         evasion_middle = int(bout_start + (self.bout_evasion_start_ids[pid][bout_id] + self.bout_evasion_end_ids[pid][bout_id]) / 2)
@@ -733,24 +784,44 @@ class Round:
 
         return preds_bout_evasion_convexity_metric
 
-    def compute_bout_evasion_polarisation(self, margin: int = 0, compute_at: str = "end") -> Union[List[NDArray[float]], List[List[NDArray[float]]]]:
-        agents_polarisation = self.compute_agent_polarisation()
+    def compute_bout_evasion_polarisation(self, compute_at: str = "end",
+                                          fit: bool = True, fit_for: str = "all", smooth: bool = True, smoothing_args: Dict[str, Any] = None,
+                                          ) -> Tuple[Union[List[NDArray[float]], List[List[NDArray[float]]]], List, List[List[int]]]:
+        agents_polarisation = self.compute_agent_polarisation(smooth=smooth, smoothing_args=smoothing_args)
 
         preds_bout_evasion_polarisation_metric = []
+        preds_lr_info = []
+        preds_lr_window_bounds = []
         for pid in range(self.n_preds):
             bout_evasion_polarisation_metric = np.full(len(self.pred_bout_bounds_filtered[pid]), -1.) if compute_at != "all" else []
+            lr_info = []
+            lr_window_bounds = []
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
                 if compute_at == "all" or self.bout_evasion_start_ids[pid][bout_id] >= 0:
                     bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
 
                     if compute_at == "end":
-                        evasion_end = min([bout_start + self.bout_evasion_end_ids[pid][bout_id] + margin, len(self.pred_data_arrs[pid])])
+                        evasion_end = bout_start + self.bout_evasion_end_ids[pid][bout_id]
                         polarisation = agents_polarisation[evasion_end]
                     elif compute_at == "middle":
                         evasion_middle = int(bout_start + (self.bout_evasion_start_ids[pid][bout_id] + self.bout_evasion_end_ids[pid][bout_id]) / 2)
                         polarisation = agents_polarisation[evasion_middle]
                     elif compute_at == "all":
                         polarisation = agents_polarisation[bout_start:bout_end]
+                        if fit and self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                            polarisation_to_fit = polarisation[self.bout_evasion_start_ids[pid][bout_id]:self.bout_evasion_end_ids[pid][bout_id]]
+                            if fit_for != "all":
+                                window_bound = np.argmin(polarisation_to_fit)
+                                if window_bound <= 2:
+                                    window_bound = len(polarisation_to_fit) - 1
+                                polarisation_to_fit = polarisation_to_fit[:window_bound + 1]
+                                lr_window_bounds.append(window_bound)
+                            else:
+                                lr_window_bounds.append(len(polarisation_to_fit))
+                            lr_info.append(fit_lr_to_timeseries(polarisation_to_fit))
+                        else:
+                            lr_info.append(None)
+                            lr_window_bounds.append(-1)
                     else:
                         raise ValueError(f"Invalid compute_at value: {compute_at}")
 
@@ -760,114 +831,288 @@ class Round:
                         bout_evasion_polarisation_metric.append(polarisation)
 
             preds_bout_evasion_polarisation_metric.append(bout_evasion_polarisation_metric)
+            preds_lr_info.append(lr_info)
+            preds_lr_window_bounds.append(lr_window_bounds)
 
-        return preds_bout_evasion_polarisation_metric
+        return preds_bout_evasion_polarisation_metric, preds_lr_info, preds_lr_window_bounds
 
-    def detect_isolated_agents(self, dbscan_eps: float = 0.15) -> List[List[List[List[int]]]]:
+    def detect_isolated_agents(self, dbscan_eps: float = 0.15):
+        print(f"Detecting isolated using DBSCAN with eps={dbscan_eps}")
         agent_dist_to_nn = transpose_list_of_arrays(self.compute_agent_distance_to_nearest_neighbor())
 
-        isolated_individuals = []
+        preds_isolated_individuals = []
         for pid in range(self.n_preds):
-            pred_isolated_individuals = []
+            isolated_individuals = []
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
                 bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
-                pred_bout_isolated_individuals = []
+                bout_isolated_individuals = []
                 for tid in range(bout_start, bout_end):
                     data = agent_dist_to_nn[tid]
                     dbscan = sklearn.cluster.DBSCAN(eps=dbscan_eps)
                     outliers = dbscan.fit_predict(data)
-                    pred_bout_isolated_individuals.append([outlier[0] for outlier in np.argwhere(outliers != 0)])
-                pred_isolated_individuals.append(pred_bout_isolated_individuals)
-            isolated_individuals.append(pred_isolated_individuals)
+                    bout_isolated_individuals.append([outlier[0] for outlier in np.argwhere(outliers != 0)])
+                isolated_individuals.append(bout_isolated_individuals)
+            preds_isolated_individuals.append(isolated_individuals)
 
-        return isolated_individuals
+        self.preds_isolated_individuals = preds_isolated_individuals
 
-    def write_bout_info(self, output_path, exp_plotter_args: Dict[str, Any],
-                        mark_speed_spike: bool = False, speed_spike_threshold: float = 10.) -> None:
+    def compute_agents_rel_pos(self):
+        print(f"Computing agent position relative to school and predator")
+        preds_agents_rel_pos = []
+        self.rel_pos_steps_back = []
+        com_vels = self.compute_agent_com_velocity()
+        for pid in range(self.n_preds):
+            agents_rel_pos = []
+            self.rel_pos_steps_back.append([])
+            for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
+                bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
+                evasion_start = bout_start + self.bout_evasion_start_ids[pid][bout_id] if self.bout_evasion_start_ids[pid][bout_id] is not None else bout_start
+
+                bout_agents_rel_pos = []
+                steps_back = int(self.avg_fs/2)
+                self.rel_pos_steps_back[pid].append(min([steps_back, evasion_start - bout_start]))
+                for tid in [evasion_start, evasion_start - self.rel_pos_steps_back[pid][bout_id]]:
+
+                    com_pos = self.agent_com[tid]
+                    com_vel_vec = com_vels[tid] - com_pos
+
+                    dd = map(lambda x: np.linalg.norm(x), transpose_list_of_arrays(self.agent_data_arrs)[tid] - com_pos.reshape((1, -1)))
+                    max_dd = np.max(list(dd))
+
+                    rel_pos_to_com = []
+                    for aid in range(self.n_agents):
+                        agent_pos_rel_to_com = self.agents_data[aid][tid] - com_pos
+                        rel_pos_to_com.append(np.dot(com_vel_vec, agent_pos_rel_to_com) / (np.linalg.norm(com_pos) * np.linalg.norm(agent_pos_rel_to_com)))
+
+                    ######### school division by bulk and edges #######################
+                    rel_pos_to_school = []
+                    for aid in range(self.n_agents):
+                        a = self.agents_data[aid][tid]
+                        rel_pos_to_school.append(int(sum((a - com_pos) * (a - com_pos)) < (max_dd / 3) * (max_dd / 3)))  # if true(1)-inside, false(0)-on the edges
+
+                    edges_all = np.array(rel_pos_to_school) == 0
+                    edges_front = np.logical_and(np.array(rel_pos_to_com) > 0.5, np.array(rel_pos_to_school) == 0)
+                    edges_back = np.logical_and(np.array(rel_pos_to_com) < -0.5, np.array(rel_pos_to_school) == 0)
+                    edges_side = np.logical_and(np.logical_and(edges_all, np.logical_not(edges_back)), np.logical_not(edges_front))
+                    bulk = np.array(rel_pos_to_school) == 1
+
+                    rel_pos = np.ones_like(rel_pos_to_com).astype(int)
+                    rel_pos[edges_back] = 0
+                    rel_pos[edges_side] = 2
+                    rel_pos[bulk] = 3
+
+                    bout_agents_rel_pos.append(rel_pos.tolist())
+                agents_rel_pos.append(bout_agents_rel_pos)
+            preds_agents_rel_pos.append(agents_rel_pos)
+
+        self.preds_agents_rel_pos = preds_agents_rel_pos
+
+    def compute_agent_rel_angular_pos(self):
+        print(f"Computing agent angular position relative to predator velocity vector")
+        preds_agents_rel_pos = []
+        v_pred = self.compute_predator_velocity()
+        for pid in range(self.n_preds):
+            r_prey = [self.agent_data_arrs[aid] - self.pred_data_arrs[pid] for aid in range(self.n_agents)]
+            agents_rel_pos = []
+            for bout_id in range(len(self.pred_bout_bounds_filtered[pid])):
+                if self.bout_evasion_start_ids[pid][bout_id] >= 0:
+                    bout_start, bout_end = self.pred_bout_bounds_filtered[pid][bout_id]
+                    evasion_start = bout_start + self.bout_evasion_start_ids[pid][bout_id]
+                    evasion_end = bout_start + self.bout_evasion_end_ids[pid][bout_id]
+                    bout_agents_rel_pos = []
+                    for aid in range(self.n_agents):
+                        bout_agent_rel_pos = []
+                        for tid in range(evasion_end - evasion_start):
+                            bout_agent_rel_pos.append(np.dot(r_prey[aid][evasion_start:evasion_end][tid], v_pred[pid][evasion_start:evasion_end][tid].T) / (np.linalg.norm(r_prey[aid][evasion_start:evasion_end][tid]) * np.linalg.norm(v_pred[pid][evasion_start:evasion_end][tid])))
+                        bout_agents_rel_pos.append(np.array(bout_agent_rel_pos))
+                else:
+                    bout_agents_rel_pos = None
+                agents_rel_pos.append(bout_agents_rel_pos)
+            preds_agents_rel_pos.append(agents_rel_pos)
+
+        return preds_agents_rel_pos
+
+    def write_bout_info(self, output_path: str, exp_plotter_args: Dict[str, Any],
+                        smooth_metrics: bool = True, smoothing_args: Dict[str, Any] = None,
+                        mark_speed_spike: bool = False, speed_spike_threshold: float = 10.,
+                        rel_pos_at_bout_start: bool = True, with_plots: bool = True, with_csv: bool = True,
+                        with_hdf5: bool = False) -> None:
         exp_plotter = RoundPlotter(self, **exp_plotter_args)
         com_speed = self.compute_agent_com_speed()
         preds_speed = self.compute_predator_speed()
         preds_acc = self.compute_predator_acceleration(smooth=False)
         preds_attack_angle = self.compute_predator_attack_angle(smooth=False)
         preds_n_preys_behind = self.compute_n_preys_behind_predator()
+        preds_straightness_evasion = self.compute_bout_evasion_straightness_metric()
+        preds_straightness_bout = self.compute_bout_evasion_straightness_metric(during_evasion=False)
+        preds_dist_to_com = self.compute_predator_distance_to_agent_com()
+        agent_rel_pos_to_pred_vel = self.compute_agent_rel_angular_pos()
 
-        circularity = self.compute_bout_evasion_circularity(all_timepoints=True)
         convexity = self.compute_bout_evasion_convexity(compute_at="all")
-        polarisation = self.compute_bout_evasion_polarisation(compute_at="all")
+        polarisation, polarisation_lr_info, polarisation_lr_window = self.compute_bout_evasion_polarisation(compute_at="all", smooth=smooth_metrics, smoothing_args=smoothing_args, fit_for="min")
+        circularity, circularity_lr_info = self.compute_bout_evasion_circularity(all_timepoints=True, smooth=smooth_metrics, smoothing_args=smoothing_args, fit_for="max", fit_windows=polarisation_lr_window)
+
+        output_hdf5_file = f"{'/'.join(output_path.split('/')[:-2])}/bout_info.h5"
+
+        #if os.path.isfile(output_hdf5_file) and with_hdf5:  # Empty the file if it already exists
+        #    f = open(output_hdf5_file, "w+")
+        #    f.close()
 
         for pid_in_bout in range(self.n_preds):
             for bout_id in range(len(self.pred_bout_bounds_filtered[pid_in_bout])):
-                print(f"Writing bout {self.pred_bout_ids_filtered[pid_in_bout][bout_id]}...")
                 
                 bout_start, bout_end = self.pred_bout_bounds_filtered[pid_in_bout][bout_id]
+                bout_unique_id = self.pred_bout_ids_filtered[pid_in_bout][bout_id]
+                evasion_detected = True if self.bout_evasion_start_ids[pid_in_bout][bout_id] >= 0 else False
 
-                bout_output_path = f"{output_path}/{self.pred_bout_ids_filtered[pid_in_bout][bout_id]}"
-                if not os.path.exists(bout_output_path):
-                    os.makedirs(bout_output_path)
+                if with_hdf5:
+                    # HDF5 file
+                    output_hdf5 = h5py.File(output_hdf5_file, 'a', libver='latest')
+                    print(f"Writing bout data {self.pred_bout_ids_filtered[pid_in_bout][bout_id]} to {output_hdf5_file}...")
+                    experiment_group = output_hdf5.require_group(self.experiment_id)
+                    round_group = experiment_group.require_group(self.round_id)
+                    bout_group = round_group.create_group(bout_unique_id)
 
-                # CSV file
-                output_csv = f"{bout_output_path}/{self.pred_bout_ids_filtered[pid_in_bout][bout_id]}.csv"
+                    # Bout characteristics
+                    bout_characteristics_group = bout_group.create_group('bout_characteristics')
+                    bout_characteristics_group.create_dataset('bout_id', dtype='S10', data=[bout_unique_id.encode("ascii", "ignore")])
+                    bout_characteristics_group.create_dataset('bout_duration_secs', dtype='f', data=self.timestamps[bout_end] - self.timestamps[bout_start])
+                    bout_characteristics_group.create_dataset('bout_framerate', dtype='f', data=self.avg_fs)
+                    bout_characteristics_group.create_dataset('prey_trajectory', dtype='f', data=[self.agent_data_arrs[aid][bout_start:bout_end] for aid in range(self.n_agents)])
+                    bout_characteristics_group.create_dataset('predator_trajectory', dtype='f', data=[self.pred_data_arrs[pid][bout_start:bout_end] for pid in range(self.n_preds)])
+                    bout_characteristics_group.create_dataset('evasion_detected', dtype='i', data=1 if evasion_detected else 0)
+                    bout_characteristics_group.create_dataset('evasion_start', dtype='i', data=self.bout_evasion_start_ids[pid_in_bout][bout_id] if evasion_detected else -1)
+                    bout_characteristics_group.create_dataset('evasion_end', dtype='i', data=self.bout_evasion_end_ids[pid_in_bout][bout_id] if evasion_detected else -1)
+                    # fountain detection and score manual/automatic....
+                    bout_characteristics_group.create_dataset('isolated_individual_detected', dtype='i', data=1 if np.any([len(self.preds_isolated_individuals[pid_in_bout][bout_id][tid]) > 0 for tid in range(bout_end - bout_start)]) else 0)
 
-                if os.path.isfile(output_csv):  # Empty the file if it already exists
-                    f = open(output_csv, "w+")
-                    f.close()
+                    # Prey characteristics
+                    prey_characteristics_group = bout_group.create_group('prey_characteristics')
+                        # fount characteristics manual scores...
+                    prey_characteristics_group.create_dataset('circularity', dtype='f', data=circularity[pid_in_bout][bout_id] if evasion_detected else np.nan)
+                    prey_characteristics_group.create_dataset('convexity', dtype='f', data=convexity[pid_in_bout][bout_id] if evasion_detected else np.nan)
+                    prey_characteristics_group.create_dataset('polarisation', dtype='f', data=polarisation[pid_in_bout][bout_id] if evasion_detected else np.nan)
+                    prey_characteristics_group.create_dataset('circularity_lr_slope', dtype='f', data=circularity_lr_info[pid_in_bout][bout_id][1] if evasion_detected else np.nan)
+                    prey_characteristics_group.create_dataset('polarisation_lr_slope', dtype='f', data=polarisation_lr_info[pid_in_bout][bout_id][1] if evasion_detected else np.nan)
+                    prey_characteristics_group.create_dataset('circularity_lr_window_fit_bound_values', dtype='f', data=[circularity_lr_info[pid_in_bout][bout_id][1] * (polarisation_lr_window[pid_in_bout][bout_id] - self.bout_evasion_start_ids[pid_in_bout][bout_id]) + circularity_lr_info[pid_in_bout][bout_id][0],
+                                                                                                                             circularity_lr_info[pid_in_bout][bout_id][1]] if evasion_detected else np.nan)
+                    prey_characteristics_group.create_dataset('circularity_lr_window_bound_values', dtype='f', data=[circularity[pid_in_bout][bout_id][self.bout_evasion_start_ids[pid_in_bout][bout_id]],
+                                                                                                                         circularity[pid_in_bout][bout_id][polarisation_lr_window[pid_in_bout][bout_id]]] if evasion_detected else np.nan)
+                    prey_characteristics_group.create_dataset('polarisation_lr_window_fit_bound_values', dtype='f', data=[polarisation_lr_info[pid_in_bout][bout_id][1] * (polarisation_lr_window[pid_in_bout][bout_id] - self.bout_evasion_start_ids[pid_in_bout][bout_id]) + polarisation_lr_info[pid_in_bout][bout_id][0],
+                                                                                                                              polarisation_lr_info[pid_in_bout][bout_id][1]] if evasion_detected else np.nan)
+                    prey_characteristics_group.create_dataset('polarisation_lr_window_bound_values', dtype='f', data=[polarisation[pid_in_bout][bout_id][self.bout_evasion_start_ids[pid_in_bout][bout_id]],
+                                                                                                                          polarisation[pid_in_bout][bout_id][polarisation_lr_window[pid_in_bout][bout_id]]] if evasion_detected else np.nan)
 
-                with open(output_csv, 'a') as output_file:
-                    header = ",".join(["timestep", "timestamp", "coms", "circularity", "convexity", "polarisation"])
-                    for aid in range(self.n_agents):
-                        header = ",".join([header, f"x{aid}", f"y{aid}"])
-                    for pid in range(self.n_preds):
-                        header = ",".join([header, f"prx{pid}", f"pry{pid}",
-                                                   f"prs{pid}", f"pra{pid}", f"praa{pid}", f"prnpb{pid}"])
-                    output_file.write(f"{header}\n")
+                    # Isolates characteristics
+                    isolates_characteristics_group = bout_group.create_group('isolates_characteristics')
+                    isolates_characteristics_group.create_dataset('isolated_individual_ids', dtype='i', data=flatten([self.preds_isolated_individuals[pid_in_bout][bout_id][tid] for tid in range(bout_end - bout_start) if len(self.preds_isolated_individuals[pid_in_bout][bout_id][tid]) > 0]) if evasion_detected else -1)
+                    isolates_characteristics_group.create_dataset('isolated_individual_timeframes', dtype='i', data=flatten([[tid for _ in range(len(self.preds_isolated_individuals[pid_in_bout][bout_id][tid]))] for tid in range(bout_end - bout_start) if len(self.preds_isolated_individuals[pid_in_bout][bout_id][tid]) > 0]) if evasion_detected else -1)
+                    isolates_characteristics_group.create_dataset('isolated_individual_relative_positions', dtype='i', data=flatten([[self.preds_agents_rel_pos[pid_in_bout][bout_id][0 if rel_pos_at_bout_start else 1][isolate] for isolate in self.preds_isolated_individuals[pid_in_bout][bout_id][tid]] for tid in range(bout_end - bout_start) if len(self.preds_isolated_individuals[pid_in_bout][bout_id][tid]) > 0]) if evasion_detected else -1)
+                    isolates_characteristics_group.create_dataset('isolated_individual_angular_position_wrt_pred_speed', dtype='f', data=agent_rel_pos_to_pred_vel[pid_in_bout][bout_id] if evasion_detected else np.nan)
 
-                    for idx in range(bout_start, bout_end):
-                        line = ",".join([str(self.timesteps[idx]), str(self.timestamps[idx]), str(com_speed[idx]),
-                                         str(circularity[pid_in_bout][bout_id][idx - bout_start]),
-                                         str(convexity[pid_in_bout][bout_id][idx - bout_start]),
-                                         str(polarisation[pid_in_bout][bout_id][idx - bout_start])])
+                    # Predator characteristics
+                    pred_characteristics_group = bout_group.create_group('predator_characteristics')
+                    pred_characteristics_group.create_dataset('predator_speed', dtype='f', data=preds_speed[pid_in_bout][bout_start:bout_end])
+                    pred_characteristics_group.create_dataset('predator_attack_angle', dtype='f', data=preds_attack_angle[pid_in_bout][bout_start:bout_end])
+                    pred_characteristics_group.create_dataset('predator_distance_to_com', dtype='f', data=preds_dist_to_com[pid_in_bout][bout_start:bout_end])
+                    pred_characteristics_group.create_dataset('predator_attack_straightness_evasion', dtype='f', data=preds_straightness_evasion[pid_in_bout][bout_id] if evasion_detected else np.nan)
+                    pred_characteristics_group.create_dataset('predator_attack_straightness_bout', dtype='f', data=preds_straightness_bout[pid_in_bout][bout_id])
+
+                    output_hdf5.close()
+
+                if with_csv:
+                    print(f"Writing bout {self.pred_bout_ids_filtered[pid_in_bout][bout_id]}...")
+                    bout_output_path = f"{output_path}/{self.pred_bout_ids_filtered[pid_in_bout][bout_id]}"
+                    if not os.path.exists(bout_output_path):
+                        os.makedirs(bout_output_path)
+
+                    # CSV file
+                    output_csv = f"{bout_output_path}/{self.pred_bout_ids_filtered[pid_in_bout][bout_id]}.csv"
+
+                    if os.path.isfile(output_csv):  # Empty the file if it already exists
+                        f = open(output_csv, "w+")
+                        f.close()
+
+                    with open(output_csv, 'a') as output_file:
+                        header = ",".join(["timestep", "timestamp", "coms", "circularity", "convexity", "polarisation"])
                         for aid in range(self.n_agents):
-                            line = ",".join([line, str(self.agents_data[aid][idx][0]), str(self.agents_data[aid][idx][1])])
+                            header = ",".join([header, f"x{aid}", f"y{aid}"])
                         for pid in range(self.n_preds):
-                            line = ",".join([line, str(self.preds_data[pid][idx][0]), str(self.preds_data[pid][idx][1]),
-                                                   str(preds_speed[pid][idx]), str(preds_acc[pid][idx]),
-                                                   str(preds_attack_angle[pid][idx]), str(preds_n_preys_behind[pid][idx])])
-                        output_file.write(f"{line}\n")
+                            header = ",".join([header, f"prx{pid}", f"pry{pid}",
+                                                       f"prs{pid}", f"pra{pid}", f"praa{pid}", f"prnpb{pid}"])
+                        output_file.write(f"{header}\n")
 
-                # Video
-                # change to single bout
-                exp_plotter.plot_single_bout(bout_id=self.pred_bout_ids_filtered[pid_in_bout][bout_id], show_com=True, save=True, show=False,
-                                             mark_speed_spike=mark_speed_spike, speed_spike_threshold=speed_spike_threshold,
-                                             out_file_path=f"{bout_output_path}/bout_divisions_{self.pred_bout_ids_filtered[pid_in_bout][bout_id]}.mp4")
+                        for idx in range(bout_start, bout_end):
+                            line = ",".join([str(self.timesteps[idx]), str(self.timestamps[idx]), str(com_speed[idx]),
+                                             str(circularity[pid_in_bout][bout_id][idx - bout_start]),
+                                             str(convexity[pid_in_bout][bout_id][idx - bout_start]),
+                                             str(polarisation[pid_in_bout][bout_id][idx - bout_start])])
+                            for aid in range(self.n_agents):
+                                line = ",".join([line, str(self.agents_data[aid][idx][0]), str(self.agents_data[aid][idx][1])])
+                            for pid in range(self.n_preds):
+                                line = ",".join([line, str(self.preds_data[pid][idx][0]), str(self.preds_data[pid][idx][1]),
+                                                       str(preds_speed[pid][idx]), str(preds_acc[pid][idx]),
+                                                       str(preds_attack_angle[pid][idx]), str(preds_n_preys_behind[pid][idx])])
+                            output_file.write(f"{line}\n")
+                if with_plots:
+                    # Video
+                    # change to single bout
+                    exp_plotter.plot_single_bout(bout_id=self.pred_bout_ids_filtered[pid_in_bout][bout_id], show_com=True, save=True, show=False,
+                                                 mark_speed_spike=mark_speed_spike, speed_spike_threshold=speed_spike_threshold,
+                                                 out_file_path=f"{bout_output_path}/bout_divisions_{self.pred_bout_ids_filtered[pid_in_bout][bout_id]}.mp4")
 
+    def write_round_info(self, output_path: str, exp_plotter_args: Dict[str, Any],):
+        exp_plotter = RoundPlotter(self, **exp_plotter_args)
+
+        exp_plotter.plot_bout_division(save=True, show=False, out_file_path=f"{output_path}/bout_divisions_{self.round_id}.mp4")
 
 if __name__ == "__main__":
     #find CoBeHumanExperimentsData/ -name '*.zip' -exec sh -c 'unzip -d "${1%.*}" "$1"' _ {} \;
 
-    round_id = "6095799011"#"2431419351"
+    round_id = "2431419351"
     round_types = ["P1", "P2", "Shared", "P1R1", "P1R2", "P1R3"]
-    round_type_id = 2
+    round_type_id = 4
     file_path = f"./CoBeHumanExperimentsData/{round_id}/{round_types[round_type_id-1] if round_type_id < 4 else round_types[round_type_id-1][:2].upper()}/{round_id}_{round_types[round_type_id-1][:2].upper() if round_type_id < 4 else round_types[round_type_id-1]}.csv"
 
     if not os.path.exists(file_path):
         file_path = f"./CoBeHumanExperimentsData/{round_id}/{round_types[round_type_id-1][:2].upper()}/{round_id}_{round_types[round_type_id-1][:2].upper()}.csv"
-        round_types[round_type_id - 1] = round_types[round_type_id -1][:2].upper()
 
-    exp = Round(file_path, n_preds=2 if round_type_id == 3 else 1,
     if not os.path.exists(file_path):
         file_path = f"./CoBeHumanExperimentsData/{round_id}/{round_types[round_type_id-1][:2].upper()}/{round_id}_{round_types[round_type_id-1][:2]}_{round_types[round_type_id - 1][2:]}.csv"
-                dist_tolerance=0.7, margin=10, min_bout_length=30,
-                speed_tolerance=0.15, speed_threshold=0.475, absolute_speed_threshold=6.65, #0.15, 5., 70.
-                bout_ids_to_remove=None, evasion_pred_dist_to_com_limit=None, evasion_vel_angle_change_limit=None)
 
+    exp = Round(file_path, n_preds=2 if round_type_id == 3 else 1, center=(0, 0),
+                dist_tolerance=0.7, margin=80, min_bout_length=170,
+                speed_tolerance=0.15, speed_threshold=0.475, absolute_speed_threshold=6.65, #0.15, 5., 70.
+                bout_ids_to_remove=None, evasion_pred_dist_to_com_limit=None, evasion_vel_angle_change_limit=None, suffix=round_types[round_type_id - 1][1:])
+    #exp.compute_bout_evasion_fountain_metric(method="convexhull")
     exp_plotter = RoundPlotter(exp, mac=True)
-    exp_plotter.plot_metrics(time_window_dur=2, smoothing_args={'kernel': gaussian, 'window_size': 100},
-                             #save=True, # saving does not seem to work yet
-                             out_file_path=f"./CoBeHumanExperimentsDataAnonymized/{round_id}/{round_types[round_type_id-1]}/{round_id}_{round_types[round_type_id-1][:2].upper()}.mp4",
-                             com_only=True)
-    exp_plotter.plot_predator_acc_smoothings(time_window_dur=2, window_size=40, com_only=True)
-    exp_plotter.plot_bout_trajectories()
-    exp_plotter.plot_bout_trajectories(discarded=True, filter_number=0)  # minimum bout length filter
-    exp_plotter.plot_bout_trajectories(discarded=True, filter_number=1)  # speed filter
-    exp_plotter.plot_bout_trajectories(discarded=True, filter_number=2)  # absolute speed filter
-    exp_plotter.plot_bout_division(com_only=True)
+    #exp_plotter.plot_metrics(time_window_dur=2, smoothing_args={'kernel': gaussian, 'window_size': 100}, show_com=True, show_pred_vel_vector=True, #save=True, # saving does not seem to work yet, out_file_path=f"./CoBeHumanExperimentsDataAnonymized/{round_id}/{round_types[round_type_id-1]}/{round_id}_{round_types[round_type_id-1][:2].upper()}.mp4",
+    #                        )
+
+    #exp_plotter.plot_predator_acc_smoothings(time_window_dur=2, window_size=40, show_com=True)
+
+    #exp_plotter.plot_bout_trajectories()
+    #exp_plotter.plot_bout_trajectories(discarded=True, filter_number=0)  # minimum bout length filter
+    #exp_plotter.plot_bout_trajectories(discarded=True, filter_number=1)  # speed filter
+    #exp_plotter.plot_bout_trajectories(discarded=True, filter_number=2)  # absolute speed filter
+    ##exp_plotter.plot_bout_trajectories(discarded=True, filter_number=3)  # manual removal by ID
+
+    #exp_plotter.plot_bout_division(show_com=True, time_window_dur=20., save=False, out_file_path=f"bout_divisions_{round_id}_{round_types[round_type_id - 1]}.mp4")
+    #exp.write_bout_info(output_path='.', exp_plotter_args={'mac': True})
+    bout_id = "1_1R1"
+    exp_plotter.plot_single_bout(bout_id=bout_id, with_metrics=True, save=False, out_file_path=f"/Users/Ghadi_1/Desktop/{round_id}_{bout_id}.gif",
+                                 color_agents_by_rel_pos=True, rel_pos_at_evasion_start=False, plot_com_vel_vec=True)
+
+    exp_plotter.plot_bout_metric(metric=exp.compute_predator_attack_angle(smooth=True), reference_times=exp.bout_evasion_start_times, reference_ids=exp.bout_evasion_start_ids)
+    exp_plotter.plot_bout_metric_static(metric=exp.compute_bout_evasion_straightness_metric(), metric_name="straightness", overlay_bouts=True)
+    exp_plotter.plot_bout_metric_static(metric=exp.compute_bout_evasion_straightness_metric(), metric_name="straightness", overlay_bouts=False)
+    exp_plotter.plot_bout_metric(metric=exp.compute_predator_attack_angle(smooth=True), metric_name='Predator attack angle [degrees]',
+                                 reference_times=exp.bout_evasion_start_times, reference_ids=exp.bout_evasion_start_ids, reference_time_name='evasion start [s]',
+                                 overlay_bouts=True)
+    exp_plotter.plot_bout_metric(metric=exp.compute_predator_distance_to_agent_com(), metric_name='Predator distance to agent COM',
+                                 reference_times=exp.bout_evasion_start_times, reference_ids=exp.bout_evasion_start_ids, reference_time_name='evasion start [s]',
+                                 overlay_bouts=True)
+    exp_plotter.plot_bout_metric(metric=exp.compute_predator_to_agent_com_speed_ratio(), metric_name='Predator to agent COM speed ratio',
+                                 reference_times=exp.bout_evasion_start_times, reference_ids=exp.bout_evasion_start_ids, reference_time_name='evasion start [s]',
+                                 overlay_bouts=True)
+

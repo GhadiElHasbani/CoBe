@@ -5,6 +5,7 @@ from matplotlib import animation
 import matplotlib.patches as patches
 import matplotlib as mpl
 import mpl_toolkits.mplot3d.art3d as art3d
+from matplotlib.lines import Line2D
 
 from helpers import *
 
@@ -32,16 +33,24 @@ class RoundPlotter:
             ax.set_zlabel("Time [s]")
             ax.set_zlim(self.round.timestamps[0], self.round.timestamps[t])
 
-    def update_arena_borders(self, ax: plt.Axes, z: float, force_2d: bool = False) -> None:
+    def update_arena_borders(self, ax: plt.Axes, z: float, force_2d: bool = False, show_true_arena_border: bool = False) -> None:
         for i in ["z"]:
             circle = plt.Circle(self.round.center, self.round.radius, fill=False, linewidth=1, alpha=1, linestyle="--")
             rect = patches.Rectangle((-self.round.width / 2 + self.round.center[0], -self.round.width / 2 + self.round.center[1]), self.round.width, self.round.width,
                                      linewidth=1, fill=False, linestyle=":")
+            true_rect = patches.Rectangle((-self.round.radius + self.round.center[0], -self.round.radius + self.round.center[1]), self.round.radius * 2, self.round.radius * 2,
+                                          linewidth=1, fill=False, linestyle="--")
             ax.add_patch(rect)
-            ax.add_artist(circle)
+            if not show_true_arena_border:
+                ax.add_artist(circle)
+            else:
+                ax.add_patch(true_rect)
             if not force_2d:
                 art3d.pathpatch_2d_to_3d(rect, z=z, zdir=i)
-                art3d.pathpatch_2d_to_3d(circle, z=z, zdir=i)
+                if not show_true_arena_border:
+                    art3d.pathpatch_2d_to_3d(circle, z=z, zdir=i)
+                else:
+                    art3d.pathpatch_2d_to_3d(true_rect, z=z, zdir=i)
 
     def plot_agent_trajectories(self, agent_data: Union[List[Tuple[float, float]], NDArray[float]], ax: plt.Axes, t: int,
                                 cmap: str = 'viridis', force_2d: bool = False) -> None:
@@ -54,7 +63,7 @@ class RoundPlotter:
 
     def update_agent_trajectories(self, agents_data: List[List[Tuple[float, float]]], ax: plt.Axes, t: int, z: float,
                                   force_2d:bool=False, keep_agent_history: bool = False, keep_com_history: bool = True,
-                                  show_com: bool = False, agent_com: NDArray[float] = None, max_n_agents: int = None) -> None:
+                                  show_com: bool = False, agent_com: NDArray[float] = None, max_n_agents: int = None, color:str =None) -> None:
         def plot_agent_markers(agent_data: Union[List[Tuple[float, float]], NDArray[float]], ax: plt.Axes, t: int, z: float, marker: str='o', s:int=25,
                                c: str = None, force_2d:bool=False):
             x = agent_data[t][0]
@@ -67,7 +76,7 @@ class RoundPlotter:
 
         for aid in range(min([max_n_agents if max_n_agents is not None else self.round.n_agents, self.round.n_agents])):
             agent_data = agents_data[aid]
-            plot_agent_markers(agent_data, ax=ax, t=t, z=z, force_2d=force_2d)
+            plot_agent_markers(agent_data, ax=ax, t=t, z=z, force_2d=force_2d, c=color)
 
             if keep_agent_history:
                 self.plot_agent_trajectories(agent_data, ax=ax, t=t, force_2d=force_2d)
@@ -77,11 +86,10 @@ class RoundPlotter:
             if keep_com_history:
                 self.plot_agent_trajectories(agent_com, ax=ax, t=t, cmap='Greys', force_2d=force_2d)
 
-
     def update_predator_trajectories(self, preds_data: List[List[Tuple[float, float]]],
                                      ax: plt.Axes, t: int, z: float, labels: List[str] = None,
                                      show_pred_vel_vector: bool = False, preds_data_vel: List[NDArray[float]] = None,
-                                     keep_history: bool = True, force_2d: bool = False) -> None:
+                                     keep_history: bool = True, force_2d: bool = False, quiverkey: bool = False, showing_prey_rel_pos: bool = False) -> None:
         for pid in range(self.round.n_preds):
             pred_data = preds_data[pid]
 
@@ -106,14 +114,15 @@ class RoundPlotter:
 
                 if show_pred_vel_vector:
                     vel_vector_norm = np.linalg.norm(preds_data_vel[pid][t])
-                    ax.quiver(pred_data[t][0], pred_data[t][1], preds_data_vel[pid][t][0] / vel_vector_norm,
+                    q = ax.quiver(pred_data[t][0], pred_data[t][1], preds_data_vel[pid][t][0] / vel_vector_norm,
                               preds_data_vel[pid][t][1] / vel_vector_norm,
-                              color=self.colors[pid][:-1], linestyle='--')
-
+                              color=self.colors[pid][:-1], linestyle='--', label='predator velocity')
+                    if quiverkey and pid == 0:
+                        ax.quiverkey(q, X=0.716, Y=0.775 if showing_prey_rel_pos else 0.83, U=1, label='predator velocity', labelpos='E', fontproperties={'size': 7}, zorder=2, labelsep=0.05)
                     perpendicular_vector = get_perpendicular_vector(np.array([preds_data_vel[pid][t][0], preds_data_vel[pid][t][1]]) / vel_vector_norm) * 10 + pred_data[t]
                     ax.plot((perpendicular_vector[0][0], pred_data[t][0], perpendicular_vector[1][0]),
                             (perpendicular_vector[0][1], pred_data[t][1], perpendicular_vector[1][1]), color='k',
-                            linestyle='--')
+                            linestyle='--', zorder=0)
             else:
                 ax.scatter(x, y, z, s=100, marker='x', color=self.colors[pid][:-1], label=labels[pid] if labels is not None else None)
 
@@ -133,23 +142,27 @@ class RoundPlotter:
 
     def update_trajectories(self, agents_data: List[List[Tuple[float, float]]], preds_data: List[List[Tuple[float, float]]],
                             ax: plt.Axes, t: int, z: float, pred_labels: List[str] = None, keep_pred_history: bool = True,
-                            show_arena_borders: bool = True, show_com: bool = False, agent_com=NDArray[float],
-                            preds_data_vel: List[NDArray[float]] = None, show_pred_vel_vector: bool = False,
-                            force_2d: bool = False, keep_com_history: bool = True, keep_agent_history: bool = False) -> None:
+                            show_arena_borders: bool = True, show_com: bool = False, agent_com=NDArray[float], quiverkey: bool = False,
+                            preds_data_vel: List[NDArray[float]] = None, show_pred_vel_vector: bool = False, show_true_arena_border: bool = False,
+                            force_2d: bool = False, keep_com_history: bool = True, keep_agent_history: bool = False, showing_prey_rel_pos: bool = False,
+                            agent_color:str= None) -> None:
         if not keep_pred_history:
             force_2d = True
 
         if show_arena_borders:
             # Arena borders
-            self.update_arena_borders(ax=ax, z=z, force_2d=force_2d)
-
-        # predator data
-        self.update_predator_trajectories(preds_data=preds_data, ax=ax, t=t, z=z, labels=pred_labels, keep_history=keep_pred_history,
-                                          show_pred_vel_vector=show_pred_vel_vector, preds_data_vel=preds_data_vel, force_2d=force_2d)
+            self.update_arena_borders(ax=ax, z=z, force_2d=force_2d, show_true_arena_border=show_true_arena_border)
 
         # agent data
         self.update_agent_trajectories(agents_data=agents_data, ax=ax, t=t, z=z, show_com=show_com, agent_com=agent_com,
-                                       force_2d=force_2d, keep_com_history=keep_com_history, keep_agent_history=keep_agent_history)
+                                       force_2d=force_2d, keep_com_history=keep_com_history, keep_agent_history=keep_agent_history, color=agent_color)
+
+        # predator data
+        self.update_predator_trajectories(preds_data=preds_data, ax=ax, t=t, z=z, labels=pred_labels,
+                                          keep_history=keep_pred_history,
+                                          show_pred_vel_vector=show_pred_vel_vector, preds_data_vel=preds_data_vel,
+                                          force_2d=force_2d, quiverkey=quiverkey,
+                                          showing_prey_rel_pos=showing_prey_rel_pos)
 
         self.update_trajectories_ax_specs(ax, t=t, force_2d=force_2d)
 
@@ -532,9 +545,9 @@ class RoundPlotter:
         if ax is None:
             plt.show()
 
-    def plot_bout_division(self, show_com: bool = False, separate_predators: bool = False, fountain_metric_method: str = "convexhull",
+    def plot_bout_division(self, show_com: bool = True, separate_predators: bool = False, plot_evasion_metric_value: bool = False,
                            keep_pred_history: bool = False, keep_com_history: bool = False, keep_agent_history: bool = False,
-                           show_pred_vel_vector: bool = True, time_window_dur: float = None, show_n_agents_behind: bool = True,
+                           show_pred_vel_vector: bool = False, time_window_dur: float = 30., show_n_agents_behind: bool = False,
                            save: bool = False, out_file_path: str = "bout_divisions.mp4", show: bool = True) -> None:
         def update(t: int, args_dict: Dict) -> Dict:
             t_start = max([0, find_nearest(self.round.timestamps, self.round.timestamps[t] - 2*time_window_dur / 3)])
@@ -571,9 +584,10 @@ class RoundPlotter:
                             args_dict['ax_bout_div'].axvline(x=bout_evasion_end_time,
                                                              ymin=0.04 + pid * (separate_predators), ymax=(pid * separate_predators + 1) * 0.84,
                                                              color=self.colors[pid][:-1], linestyle="--", linewidth=1)
-                            args_dict['ax_bout_div'].text(x=(bout_evasion_start_time + bout_evasion_end_time)/2, y=1 + pid * (separate_predators),
-                                                          s=f"{bout_evasion_fountain_metric[pid][bout_id]:.3f}",
-                                                          ha='center', va='top', rotation='vertical')
+                            if plot_evasion_metric_value:
+                                args_dict['ax_bout_div'].text(x=(bout_evasion_start_time + bout_evasion_end_time)/2, y=1 + pid * (separate_predators),
+                                                              s=f"{bout_evasion_fountain_metric[pid][bout_id]:.3f}",
+                                                              ha='center', va='top', rotation='vertical')
 
                 if args_dict['in_bout'][pid]:
                     pred_labels.append("in bout")
@@ -608,7 +622,7 @@ class RoundPlotter:
             return args_dict
 
         preds_data_vel = self.round.compute_predator_velocity()
-        bout_evasion_fountain_metric = self.round.compute_bout_evasion_fountain_metric()
+        bout_evasion_fountain_metric = self.round.compute_bout_evasion_fountain_metric() if plot_evasion_metric_value else None
 
         fig = plt.figure(figsize=(15.12, 9.82), dpi=100)
         gs = GridSpec.GridSpec(2 if show_n_agents_behind else 1, 2)
@@ -650,7 +664,14 @@ class RoundPlotter:
     def plot_single_bout(self, bout_id: str, show_com: bool = True, keep_com_history: bool = True, fountain_metric_method: str = "convexhull",
                          keep_pred_history: bool = True, keep_agent_history: bool = True, force_2d: bool = True, with_metrics: bool = True,
                          show_pred_vel_vector: bool = True, mark_speed_spike: bool = False, speed_spike_threshold: float = 10.,
-                         save: bool = False, out_file_path: str = "bout.mp4", show: bool = True, dbscan_eps: float = 0.15):
+                         smooth_metrics: bool = True, smoothing_args: Dict = None, use_polarisation_fit_windows: bool = True, show_true_arena_border: bool = True,
+                         save: bool = False, out_file_path: str = "bout.mp4", show: bool = True, color_agents_by_rel_pos: bool = True,
+                         rel_pos_at_evasion_start: bool = False, plot_com_vel_vec: bool = False):
+        if smooth_metrics and smoothing_args is None:
+            smoothing_args = {'smoothing_method': 'window',
+                              'kernel': lambda z: 1,
+                              'window_size': 10}
+
         def update(t: int, args_dict: Dict) -> Dict:
 
             args_dict['ax'].cla()
@@ -660,54 +681,19 @@ class RoundPlotter:
                 args_dict['ax_circularity'].cla()
                 args_dict['ax_convexity'].cla()
                 args_dict['ax_polarisation'].cla()
+                args_dict['ax_pred_dist_to_com'].cla()
+                args_dict['ax_pred_attack_angle'].cla()
             args_dict['ax_bout_info'].cla()
 
             args_dict['ax_bout_info'].set_xlabel("Time [s]")
             args_dict['ax_bout_info'].set_ylabel("Predator in bout speed [m/s]")
 
-            if with_metrics:
-                args_dict['ax_circularity'].set_ylabel("Circularity")
-                args_dict['ax_convexity'].set_ylabel("Convexity")
-                args_dict['ax_polarisation'].set_ylabel("Polarisation")
-
             self.update_trajectories(agents_data=agents_data, preds_data=preds_data,
-                                     ax=args_dict['ax'], t=t, z=timestamps[t], show_com=show_com, agent_com=agent_com,
-                                     show_pred_vel_vector=show_pred_vel_vector, preds_data_vel=preds_data_vel, keep_pred_history=keep_pred_history,
-                                     keep_com_history=keep_com_history, keep_agent_history=keep_agent_history, force_2d=force_2d)
+                                     ax=args_dict['ax'], t=t, z=timestamps[t], show_com=show_com, agent_com=agent_com, quiverkey=True, showing_prey_rel_pos=color_agents_by_rel_pos,
+                                     show_pred_vel_vector=show_pred_vel_vector, preds_data_vel=preds_data_vel, keep_pred_history=keep_pred_history, agent_color="grey",
+                                     keep_com_history=keep_com_history, keep_agent_history=keep_agent_history, force_2d=force_2d, show_true_arena_border=show_true_arena_border)
 
-            if bout_evasion_start_time >= 0:
-
-                args_dict['ax_bout_info'].axvline(x=bout_evasion_start_time, ymin=0, ymax=np.max(pred_speed),
-                                                  color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
-                args_dict['ax_bout_info'].axvline(x=bout_evasion_end_time, ymin=0, ymax=np.max(pred_speed),
-                                                  color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
-                fontsize = "x-small"
-
-                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=np.max(pred_speed)*1.05,
-                                               s=f"Circularity metric: {bout_evasion_circularity:.3f}", fontsize=fontsize)
-                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=np.max(pred_speed),
-                                               s=f"M Convexity metric: {bout_evasion_convexity_m:.3f}", fontsize=fontsize)
-                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=np.max(pred_speed)*0.95,
-                                               s=f"E Convexity metric: {bout_evasion_convexity_e:.3f}", fontsize=fontsize)
-                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=np.max(pred_speed)*0.9,
-                                               s=f"M Polarisation metric: {bout_evasion_polarisation_m:.3f}", fontsize=fontsize)
-                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=np.max(pred_speed)*0.85,
-                                               s=f"E Polarisation metric: {bout_evasion_polarisation_e:.3f}", fontsize=fontsize)
-
-                isolated_individuals = bout_isolated_individuals[t]
-                if len(isolated_individuals) > 0:
-                    for isolated_individual in isolated_individuals:
-                        args_dict['ax'].scatter(*agents_data[isolated_individual][t], s=80, facecolors='none', edgecolors='black')
-
-                if not with_metrics:
-                    self.update_trajectories(agents_data=[agents_data[aid][bout_evasion_start_id:bout_evasion_end_id] for aid in range(self.round.n_agents)],
-                                             preds_data=[preds_data[pid][bout_evasion_start_id:bout_evasion_end_id] for pid in range(self.round.n_preds)],
-                                             ax=args_dict['ax_evasion_trajectory'], t=len(timestamps[bout_evasion_start_id:bout_evasion_end_id]) - 1, z=timestamps[bout_evasion_start_id:bout_evasion_end_id][-1],
-                                             show_com=show_com, agent_com=agent_com[bout_evasion_start_id:bout_evasion_end_id],
-                                             show_pred_vel_vector=False, keep_pred_history=True, show_arena_borders=True, force_2d=force_2d,
-                                             keep_com_history=keep_com_history, keep_agent_history=True)
-
-                if fountain_metric_method == "convexhull" and not with_metrics:
+            if fountain_metric_method == "convexhull" and not with_metrics:
                     hull = self.round.preds_convex_hulls[pid_in_bout][bout_idx]
                     hull_points = self.round.preds_convex_hull_points[pid_in_bout][bout_idx]
                     #args_dict['ax_evasion_trajectory'].plot(hull_points[hull.vertices,0], hull_points[hull.vertices,1], 'r--', lw=2)
@@ -718,26 +704,105 @@ class RoundPlotter:
                     args_dict['ax_evasion_trajectory'].plot(bounding_circle_x, bounding_circle_y)
 
             if with_metrics:
-                metrics = [circularity, convexity, polarisation]
-                for metric_id, metric_ax_name in enumerate(['ax_circularity', 'ax_convexity', 'ax_polarisation']):
+                args_dict['ax_circularity'].set_ylabel("Circularity")
+                args_dict['ax_convexity'].set_ylabel("Convexity")
+                args_dict['ax_polarisation'].set_ylabel("Polarisation")
+                args_dict['ax_pred_dist_to_com'].set_ylabel("Distance to COM [m]")
+                args_dict['ax_pred_attack_angle'].set_ylabel("Attack Angle [degrees]")
+
+                args_dict['ax_polarisation'].set_xlim([timestamps[0], timestamps[-1]])
+                args_dict['ax_polarisation'].set_xlabel("Time [s]")
+
+                metrics = [circularity, convexity, polarisation, pred_dist_to_com, pred_attack_angle]
+                mins = [0, 0, 0, 0, 0]
+                maxs = [1, 1, 1, np.max(pred_dist_to_com), 180]
+                ax_circularity.plot(timestamps, circularity_unsmoothed, color=self.colors[pid_in_bout][:-1], alpha=0.6, linestyle='--')
+                ax_polarisation.plot(timestamps, polarisation_unsmoothed, color=self.colors[pid_in_bout][:-1], alpha=0.6, linestyle='--')
+                for metric_id, metric_ax_name in enumerate(['ax_circularity', 'ax_convexity', 'ax_polarisation', 'ax_pred_dist_to_com', 'ax_pred_attack_angle']):
                     args_dict[metric_ax_name].plot(timestamps, metrics[metric_id], color=self.colors[pid_in_bout][:-1])
-                    args_dict[metric_ax_name].axvline(x=bout_evasion_start_time, ymin=0, ymax=1,
-                                                      color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
-                    args_dict[metric_ax_name].axvline(x=bout_evasion_end_time, ymin=0, ymax=1,
-                                                      color=self.colors[pid_in_bout][:-1], linestyle="--", linewidth=1)
-                    args_dict[metric_ax_name].axvline(x=timestamps[t], ymin=0, ymax=1)
+                    args_dict[metric_ax_name].axvline(x=bout_evasion_start_time, ymin=mins[metric_id], ymax=maxs[metric_id],
+                                                      color=self.colors[pid_in_bout][:-1], linestyle=":", linewidth=1)
+                    args_dict[metric_ax_name].axvline(x=bout_evasion_end_time, ymin=mins[metric_id], ymax=maxs[metric_id],
+                                                      color=self.colors[pid_in_bout][:-1], linestyle=":", linewidth=1)
+                    args_dict[metric_ax_name].axvline(x=timestamps[t], ymin=mins[metric_id], ymax=maxs[metric_id])
+                    args_dict[metric_ax_name].set_ylim(bottom=mins[metric_id], top=maxs[metric_id])
+                    if metric_ax_name != 'ax_polarisation':
+                        args_dict[metric_ax_name].tick_params(labelbottom=False, length=0)
+
             if mark_speed_spike:
-                args_dict['ax_bout_info'].text(x=(timestamps[0] + timestamps[-1])/2, y=np.max(pred_speed)*1.05,
+                args_dict['ax_bout_info'].text(x=(timestamps[0] + timestamps[-1])/2, y=8*1.05,
                                                s=f"Speed spike present: {speed_spike_present}")
+
+            if bout_evasion_start_time >= 0:
+                if color_agents_by_rel_pos:
+                    if (rel_pos_at_evasion_start and t >= bout_evasion_start_id) or (not rel_pos_at_evasion_start and t >= bout_evasion_start_id - self.round.rel_pos_steps_back[pid_in_bout][bout_idx]):
+                            for aid in range(self.round.n_agents):
+                                if bout_agents_rel_pos[aid] == 3:
+                                    c = 'yellow'
+                                elif bout_agents_rel_pos[aid] == 2:
+                                    c = 'orange'
+                                elif bout_agents_rel_pos[aid] == 1:
+                                    c = 'black'
+                                else:
+                                    c = 'blue'
+                                args_dict['ax'].scatter(*agents_data[aid][t], s=25, c=c)
+
+                args_dict['ax_bout_info'].axvline(x=bout_evasion_start_time, ymin=0, ymax=np.max(pred_speed),
+                                                  color=self.colors[pid_in_bout][:-1], linestyle=":", linewidth=1)
+                args_dict['ax_bout_info'].axvline(x=bout_evasion_end_time, ymin=0, ymax=np.max(pred_speed),
+                                                  color=self.colors[pid_in_bout][:-1], linestyle=":", linewidth=1)
+                fontsize = "x-small"
+
+                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=8*1.05,
+                                               s=f"Circularity metric: {bout_evasion_circularity:.3f}", fontsize=fontsize)
+                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=8,
+                                               s=f"M Convexity metric: {bout_evasion_convexity_m:.3f}", fontsize=fontsize)
+                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=8*0.95,
+                                               s=f"E Convexity metric: {bout_evasion_convexity_e:.3f}", fontsize=fontsize)
+                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=8*0.9,
+                                               s=f"M Polarisation metric: {bout_evasion_polarisation_m:.3f}", fontsize=fontsize)
+                args_dict['ax_bout_info'].text(x=timestamps[0]+0.05, y=8*0.85,
+                                               s=f"E Polarisation metric: {bout_evasion_polarisation_e:.3f}", fontsize=fontsize)
+
+                if len(all_isolated_individuals) > 0:
+                    for isolated_individual in all_isolated_individuals:
+                        args_dict['ax'].scatter(*agents_data[isolated_individual][t], s=80, facecolors='none', edgecolors='black')
+                isolated_individuals = bout_isolated_individuals[t]
+                if len(isolated_individuals) > 0:
+                    for isolated_individual in isolated_individuals:
+                        args_dict['ax'].scatter(*agents_data[isolated_individual][t], s=80, facecolors='none', edgecolors='magenta')
+
+                if not with_metrics:
+                    self.update_trajectories(agents_data=[agents_data[aid][bout_evasion_start_id:bout_evasion_end_id] for aid in range(self.round.n_agents)],
+                                             preds_data=[preds_data[pid][bout_evasion_start_id:bout_evasion_end_id] for pid in range(self.round.n_preds)],
+                                             ax=args_dict['ax_evasion_trajectory'], t=len(timestamps[bout_evasion_start_id:bout_evasion_end_id]) - 1, z=timestamps[bout_evasion_start_id:bout_evasion_end_id][-1],
+                                             show_com=show_com, agent_com=agent_com[bout_evasion_start_id:bout_evasion_end_id], show_true_arena_border=show_true_arena_border,
+                                             show_pred_vel_vector=False, keep_pred_history=True, show_arena_borders=True, force_2d=force_2d,
+                                             keep_com_history=keep_com_history, keep_agent_history=True)
+                else:
+                    fontsize = "small"
+                    args_dict['ax_circularity'].plot([bout_evasion_start_time, bout_evasion_end_time], [circularity_lr_info[0], circularity_lr_info[1] * (bout_evasion_end_id - bout_evasion_start_id) + circularity_lr_info[0]])
+                    args_dict['ax_circularity'].text(x=(bout_evasion_end_time + bout_evasion_start_time) / 2, y=1.1,
+                                                     s=f"a={circularity_lr_info[1]:.4f}", fontsize=fontsize)
+                    args_dict['ax_polarisation'].plot([bout_evasion_start_time, bout_evasion_end_time], [polarisation_lr_info[0], polarisation_lr_info[1] * (bout_evasion_end_id - bout_evasion_start_id) + polarisation_lr_info[0]])
+                    args_dict['ax_polarisation'].text(x=(bout_evasion_end_time + bout_evasion_start_time) / 2, y=1.1,
+                                                      s=f"a={polarisation_lr_info[1]:.4f}", fontsize=fontsize)
 
             # add time bar
             args_dict['ax_bout_info'].axvline(x=timestamps[t], ymin=0, ymax=np.max(pred_speed))
             args_dict['ax_bout_info'].set_xlim([timestamps[0], timestamps[-1]])
             #add speed
-            args_dict['ax_bout_info'].set_ylim([0, np.max(pred_speed)*1.1])
-            args_dict['ax_bout_info'].plot(timestamps, pred_speed, color=self.colors[pid_in_bout][:-1])
+            args_dict['ax_bout_info'].set_ylim([0, 8*1.1])
+            args_dict['ax_bout_info'].plot(timestamps, pred_speed, color=self.colors[pid_in_bout][:-1], alpha=0.6, linestyle='--')
+            args_dict['ax_bout_info'].plot(timestamps, pred_speed_smoothed, color=self.colors[pid_in_bout][:-1])
             #args_dict['ax_bout_info'].plot(timestamps, prey_on_both_sides_of_pred[pid_in_bout], color=self.colors[pid_in_bout][:-1])
-
+            args_dict['ax'].legend(handles=legend_elements, labels=labels, loc='upper right', prop={'size': 7}).set_zorder(1)
+            if plot_com_vel_vec:
+                norm = np.linalg.norm(self.round.compute_agent_com_velocity()[bout_start:bout_end][t])
+                args_dict['ax'].quiver(self.round.agent_com[bout_start:bout_end][t][0],
+                                       self.round.agent_com[bout_start:bout_end][t][1],
+                                       self.round.compute_agent_com_velocity()[bout_start:bout_end][t][0] / norm,
+                                       self.round.compute_agent_com_velocity()[bout_start:bout_end][t][1] / norm)
             return args_dict
 
         pid_in_bout = int(bout_id.split('_')[1]) - 1 if self.round.n_preds > 1 else 0
@@ -747,8 +812,8 @@ class RoundPlotter:
         agents_data = [self.round.agents_data[aid][bout_start:bout_end] for aid in range(self.round.n_agents)]
         agent_com = self.round.agent_com[bout_start:bout_end]
         preds_data = [self.round.preds_data[pid][bout_start:bout_end] for pid in range(self.round.n_preds)]
-        pred_speed = self.round.compute_predator_speed()
-        pred_speed = pred_speed[pid_in_bout][bout_start:bout_end]
+        pred_speed = self.round.compute_predator_speed()[pid_in_bout][bout_start:bout_end]
+        pred_speed_smoothed = self.round.compute_predator_speed(smooth=True, smoothing_args=smoothing_args)[pid_in_bout][bout_start:bout_end]
         timestamps = self.round.timestamps[bout_start:bout_end]
 
         preds_data_vel = [self.round.compute_predator_velocity()[pid][bout_start:bout_end] for pid in range(self.round.n_preds)]
@@ -760,22 +825,35 @@ class RoundPlotter:
         bout_evasion_end_time = self.round.bout_evasion_end_times[pid_in_bout][bout_idx]
         bout_evasion_start_id = self.round.bout_evasion_start_ids[pid_in_bout][bout_idx]
         bout_evasion_end_id = self.round.bout_evasion_end_ids[pid_in_bout][bout_idx]
-        bout_evasion_circularity = self.round.compute_bout_evasion_circularity()[pid_in_bout][bout_idx]
+        bout_evasion_circularity = self.round.compute_bout_evasion_circularity(smooth=smooth_metrics, smoothing_args=smoothing_args)[0][pid_in_bout][bout_idx]
         bout_evasion_convexity_m = self.round.compute_bout_evasion_convexity(compute_at="middle")[pid_in_bout][bout_idx]
         bout_evasion_convexity_e = self.round.compute_bout_evasion_convexity(compute_at="end")[pid_in_bout][bout_idx]
-        bout_evasion_polarisation_m = self.round.compute_bout_evasion_polarisation(compute_at="middle")[pid_in_bout][bout_idx]
-        bout_evasion_polarisation_e = self.round.compute_bout_evasion_polarisation(compute_at="end")[pid_in_bout][bout_idx]
+        bout_evasion_polarisation_m = self.round.compute_bout_evasion_polarisation(compute_at="middle",
+                                                                                   smooth=smooth_metrics, smoothing_args=smoothing_args)[0][pid_in_bout][bout_idx]
+        bout_evasion_polarisation_e = self.round.compute_bout_evasion_polarisation(compute_at="end",
+                                                                                   smooth=smooth_metrics, smoothing_args=smoothing_args)[0][pid_in_bout][bout_idx]
 
-        bout_isolated_individuals = self.round.detect_isolated_agents(dbscan_eps=dbscan_eps)[pid_in_bout][bout_idx]
+        isolated_individuals = self.round.preds_isolated_individuals
+        if color_agents_by_rel_pos:
+            agents_rel_pos = self.round.preds_agents_rel_pos
+            bout_agents_rel_pos = agents_rel_pos[pid_in_bout][bout_idx][0 if rel_pos_at_evasion_start else 1]
+        bout_isolated_individuals = isolated_individuals[pid_in_bout][bout_idx]
+        all_isolated_individuals = np.unique(flatten(bout_isolated_individuals))
 
         if with_metrics:
-            circularity = self.round.compute_bout_evasion_circularity(all_timepoints=True)[pid_in_bout][bout_idx]
+            polarisation, polarisation_lr_info, polarisation_lr_window = [element[pid_in_bout][bout_idx] if i < 2 else element for i, element in enumerate(self.round.compute_bout_evasion_polarisation(compute_at="all", fit_for="min", smooth=smooth_metrics, smoothing_args=smoothing_args))]
+            circularity, circularity_lr_info = [element[pid_in_bout][bout_idx] for element in self.round.compute_bout_evasion_circularity(all_timepoints=True, fit_for="max", fit_windows=polarisation_lr_window if use_polarisation_fit_windows else None, smooth=smooth_metrics, smoothing_args=smoothing_args)]
             convexity = self.round.compute_bout_evasion_convexity(compute_at="all")[pid_in_bout][bout_idx]
-            polarisation = self.round.compute_bout_evasion_polarisation(compute_at="all")[pid_in_bout][bout_idx]
+
+            polarisation_unsmoothed, _, _ = [element[pid_in_bout][bout_idx] if i < 2 else element for i, element in enumerate(self.round.compute_bout_evasion_polarisation(compute_at="all", fit_for="min", smooth=False))]
+            circularity_unsmoothed, _ = [element[pid_in_bout][bout_idx] for element in self.round.compute_bout_evasion_circularity(all_timepoints=True, fit_for="max", fit_windows=polarisation_lr_window if use_polarisation_fit_windows else None, smooth=False)]
+
+            pred_dist_to_com = self.round.compute_predator_distance_to_agent_com()[pid_in_bout][bout_start:bout_end]
+            pred_attack_angle = self.round.compute_predator_attack_angle()[pid_in_bout][bout_start:bout_end]
 
         fig = plt.figure(figsize=(15.12, 9.82), dpi=100)
-        fig.suptitle(f"Experiment ID: {self.round.file_path.split('/')[-3]}, Bout ID: {bout_id}")
-        gs = GridSpec.GridSpec(2 if not with_metrics else 4, 2)
+        fig.suptitle(f"Experiment ID: {self.round.experiment_id}, Bout ID: {bout_id}")
+        gs = GridSpec.GridSpec(2 if not with_metrics else 3, 3)
 
         ## Trajectory figure
 
@@ -786,16 +864,51 @@ class RoundPlotter:
 
             args_dict = {'ax': ax, 'ax_evasion_trajectory': ax_evasion_trajectory, 'ax_bout_info': ax_bout_info}
         else:
-            ax_bout_info = fig.add_subplot(gs[3, 1])
-            ax_convexity = fig.add_subplot(gs[1, 1], sharex=ax_bout_info)
-            ax_polarisation = fig.add_subplot(gs[2, 1], sharex=ax_bout_info)
-            ax_circularity = fig.add_subplot(gs[0, 1], sharex=ax_bout_info)
+            ax_bout_info = fig.add_subplot(gs[2, 2])
+            ax_polarisation = fig.add_subplot(gs[2, 1])
+            ax_convexity = fig.add_subplot(gs[1, 1], sharex=ax_polarisation)
+            ax_circularity = fig.add_subplot(gs[0, 1], sharex=ax_polarisation)
+            ax_pred_dist_to_com = fig.add_subplot(gs[0, 2], sharex=ax_bout_info)
+            ax_pred_attack_angle = fig.add_subplot(gs[1, 2], sharex=ax_bout_info)
 
             args_dict = {'ax': ax,
                          'ax_circularity': ax_circularity, 'ax_convexity': ax_convexity, 'ax_polarisation':  ax_polarisation,
-                         'ax_bout_info': ax_bout_info}
+                         'ax_bout_info': ax_bout_info, 'ax_pred_dist_to_com': ax_pred_dist_to_com, 'ax_pred_attack_angle': ax_pred_attack_angle}
 
         args_dict['time_bar'] = args_dict['ax_bout_info'].axvline(timestamps[0])
+
+        legend_elements = [Line2D([0], [0], linestyle=':', color='black'),
+                           Line2D([0], [0], linestyle='--', color='black'),
+                           Line2D([0], [0], linestyle='None', marker='o', markersize=1),
+                           Line2D([0], [0], linestyle='None', marker='o', markersize=7, markerfacecolor='none', markeredgecolor='black')]
+        labels = ['exclusion limit',
+                  'arena limit' if show_true_arena_border else 'prey limit',
+                  'trajectory history',
+                  'isolated prey'
+                  ]
+        for pid in range(self.round.n_preds):
+            legend_elements.append(Line2D([0], [0], linestyle='None', marker='x', markersize=9, color=self.colors[pid][:-1]))
+            labels.append('predator')
+        if show_com:
+            legend_elements.append(Line2D([0], [0], linestyle='None', marker='x', markersize=9, color='black'))
+            labels.append('COM')
+        if color_agents_by_rel_pos:
+            legend_elements.append(Line2D([0], [0], linestyle='None', marker='o', markersize=8, color='yellow'))
+            labels.append('prey bulk')
+            legend_elements.append(Line2D([0], [0], linestyle='None', marker='o', markersize=8, color='orange'))
+            labels.append('prey side')
+            legend_elements.append(Line2D([0], [0], linestyle='None', marker='o', markersize=8, color='black'))
+            labels.append('prey front')
+            legend_elements.append(Line2D([0], [0], linestyle='None', marker='o', markersize=8, color='blue'))
+            labels.append('prey back')
+        else:
+            legend_elements.append(Line2D([0], [0], linestyle='None', marker='o', markersize=5))
+            labels.append('prey')
+        if show_pred_vel_vector:
+            legend_elements.append(Line2D([0], [0], linestyle='--', linewidth=2, color='k'))
+            labels.append('front/back limit')
+            legend_elements.append(Line2D([0], [0], linestyle='-', color='white'))
+            labels.append('')
 
         ani = animation.FuncAnimation(fig=fig, func=update, frames=len(timestamps), interval=1, fargs=(args_dict,))
 
